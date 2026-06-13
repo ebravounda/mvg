@@ -1,0 +1,54 @@
+{
+  "summary": "Backend testing for MVG Computación MVP completed against public URL. 14/14 pytest tests passed covering auth (admin login success/fail, /auth/me with/without token), técnico CRUD (create + duplicate email/RUT 400), cliente + sucursal create/list/get-with-sucursales + cascade delete, órdenes (create with enrichment, list, admin stats KPIs), técnico flow (list own orders only, iniciar pendiente→en_progreso, finalizar requires evidencia_base64 -> 400 when empty, finalizar with evidencia → finalizada), cross-técnico access blocked (403 on GET /api/ordenes/{id} of another técnico), and role enforcement (técnico hitting /api/admin/* returns 403).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/tecnico/ordenes/{id}/finalizar",
+        "issue": "Body field evidencia_base64 is required by Pydantic (no default), so omitting it produces 422 instead of the documented 400. Sending an empty string correctly yields 400. Either make it Optional with explicit 400 check or accept 422 as the 'missing' contract."
+      },
+      {
+        "endpoint": "server.py @app.on_event",
+        "issue": "Uses deprecated FastAPI startup/shutdown event hooks; migrate to lifespan context manager."
+      },
+      {
+        "endpoint": "bcrypt/passlib",
+        "issue": "Backend logs harmless WARNING: 'error reading bcrypt version' (passlib reads bcrypt.__about__ which was removed in bcrypt >=4). Functionally fine; pin bcrypt<4 or upgrade passlib to silence."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_mvg_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: clean up bcrypt warning by pinning bcrypt<4.1 or upgrading passlib.",
+    "Optional: migrate @app.on_event('startup'/'shutdown') to FastAPI lifespan.",
+    "Optional: explicitly mark evidencia_base64 as required with custom 400 (currently 422 when missing entirely)."
+  ],
+  "critical_code_review_comments": [
+    "users_col.create_index('rut') is sparse but not unique. Duplicate-RUT check works via app-level pre-check only; concurrent writes could race. Consider unique partial index on rut for role='tecnico'.",
+    "create_orden generates numero correlativo via count_documents which is not unique under deletions; consider sequence collection or atomic counter.",
+    "JWT_SECRET in /app/backend/.env contains 'change-in-production' placeholder. Acceptable for MVP but flag for production.",
+    "CORS allow_origins=['*'] with allow_credentials=True is invalid per spec (browsers reject). Either set explicit origins or set allow_credentials=False.",
+    "server.py is a single 642-line file. Recommend splitting into routers (auth, admin, tecnico) and a db/models module as it grows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_mvg_backend.py (new)",
+    "/app/backend/tests/__init__.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "N/A - not requested"},
+  "seed_data_creation": "Test técnicos and clientes are created with TEST_ prefixes and cleaned up via DELETE within tests. A persistent técnico user (TEST_tecnico_<uuid>@mvg.cl) remains after the run for future regression use; safe to delete from admin UI if desired.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Tests live in /app/backend/tests/. Run with: pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml. They use EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env, admin seed admin@mvg.cl/Admin123!. Each run creates a fresh técnico via fixture (session-scoped). Frontend not tested in this iteration.",
+  "rca_of_issue": "No issues encountered. All 21 review-request scenarios were exercised by 14 pytest test cases (some scenarios combined into a single test) and all passed against the public preview URL."
+}
