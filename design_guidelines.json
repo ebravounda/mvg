@@ -1,0 +1,87 @@
+{
+  "project_name": "MVG Computación Fieldwork Hub",
+  "domain": "IT Fieldwork Management, Admin Dashboard & Mobile App",
+  "theme": "dark",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) tailored for Corporate IT",
+  "colors": {
+    "background": "#0B1121", 
+    "surface": "#1E293B", 
+    "surface_glass": "rgba(30, 41, 59, 0.7)",
+    "primary": "#2563EB", 
+    "primary_hover": "#1D4ED8",
+    "accent": "#F97316", 
+    "accent_hover": "#EA580C",
+    "text_main": "#F8FAFC", 
+    "text_muted": "#94A3B8",
+    "border": "#334155",
+    "status": {
+      "pending": "#F59E0B",
+      "in_progress": "#3B82F6",
+      "completed": "#10B981",
+      "high_priority": "#EF4444"
+    }
+  },
+  "typography": {
+    "heading_font": "Manrope",
+    "body_font": "IBM Plex Sans",
+    "scale": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-bold",
+      "body": "text-base font-normal leading-relaxed",
+      "small": "text-sm text-slate-400 font-medium"
+    }
+  },
+  "layout": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "admin_dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6",
+    "admin_sidebar": "col-span-1 md:col-span-3 lg:col-span-2 hidden md:block",
+    "admin_content": "col-span-1 md:col-span-9 lg:col-span-10",
+    "technician_view": "max-w-md mx-auto pb-20",
+    "spacing": "p-4 sm:p-6 lg:p-8"
+  },
+  "components": {
+    "cards": "bg-slate-800 border border-slate-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-200",
+    "buttons": {
+      "primary": "bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 font-medium transition-colors focus:ring-2 focus:ring-blue-500",
+      "accent": "bg-orange-500 hover:bg-orange-600 text-white rounded-lg px-4 py-2 font-medium transition-colors focus:ring-2 focus:ring-orange-500",
+      "outline": "border border-slate-600 text-slate-300 hover:bg-slate-800 hover:text-white rounded-lg px-4 py-2 font-medium transition-colors"
+    },
+    "badges": {
+      "pending": "bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+      "in_progress": "bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+      "completed": "bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+      "priority_high": "bg-red-500/20 text-red-500 border border-red-500/30 rounded-full px-2.5 py-0.5 text-xs font-semibold"
+    },
+    "inputs": "bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none w-full transition-all",
+    "bottom_nav": "fixed bottom-0 w-full bg-slate-900/90 backdrop-blur-xl border-t border-slate-800 flex justify-around items-center h-16 md:hidden z-50",
+    "header": "sticky top-0 z-40 w-full backdrop-blur-xl bg-slate-950/80 border-b border-slate-800 h-16 flex items-center justify-between px-4 sm:px-6"
+  },
+  "media": {
+    "logo_url": "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/tpua3est_C11B986A-5BC4-4840-8EE6-B8D707F5A150.png",
+    "mockup_reference": "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/15s9o622_99899115-7203-4918-A54A-F1EFF160AC0C.png",
+    "login_background": "https://images.pexels.com/photos/1181320/pexels-photo-1181320.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+  },
+  "animations": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "page_transition": "animate-in fade-in slide-in-from-bottom-4 duration-500",
+    "modal_enter": "animate-in zoom-in-95 duration-200"
+  },
+  "icons": {
+    "library": "lucide-react",
+    "instructions": "Use Lucide React icons. Ensure stroke-width is 2 for standard and 2.5 for emphasized actions. Use orange and blue accents for stateful icons."
+  },
+  "testing_attributes": {
+    "instructions": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case."
+  },
+  "instructions_to_main_agent": [
+    "Build a mobile-first PWA architecture using React (.js) and Tailwind CSS. The app has two main views: Admin and Technician.",
+    "For the Admin role, implement a standard SaaS dashboard layout: sticky header, side navigation (hidden on mobile), and a bento-style grid for KPIs. Use the provided mockup as a strict reference.",
+    "For the Technician role, enforce a mobile-centric layout: bottom navigation bar, card-based task list, and large touch targets.",
+    "Strictly adhere to the dark theme colors provided. Do not use pure black; use the slate-950/slate-800 palette.",
+    "Use Manrope for headings and IBM Plex Sans for body text.",
+    "Implement Shadcn UI components for complex interactive elements (Dialog, Tabs, Select, Form, DropdownMenu) and ensure they are customized with the dark theme colors.",
+    "For evidence photo upload, ensure the UI has a clear, large primary action area for capturing or uploading images.",
+    "The login screen should feature the provided corporate logo prominently."
+  ]
+}
