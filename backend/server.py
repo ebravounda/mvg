@@ -15,6 +15,8 @@ from jose import jwt, JWTError
 from pydantic import BaseModel, EmailStr, Field
 import openpyxl
 import io
+import base64
+from PIL import Image
 
 from whatsapp_service import send_whatsapp, build_assignment_message
 from pdf_service import build_orden_pdf
@@ -47,6 +49,41 @@ users_col = db.users
 clientes_col = db.clientes
 sucursales_col = db.sucursales
 ordenes_col = db.ordenes
+
+
+# ----------------- Image compression -----------------
+def compress_evidencia(b64: Optional[str], max_side: int = 1100, quality: int = 55) -> Optional[str]:
+    """Compress a base64 image (with or without data URL prefix) to keep
+    each pin pad photo well under 1MB. Returns a data URL on success
+    or the original string if compression fails (best-effort)."""
+    if not b64 or not isinstance(b64, str):
+        return b64
+    try:
+        data_str = b64
+        if data_str.startswith("data:"):
+            _, _, rest = data_str.partition(",")
+            data_str = rest
+        raw = base64.b64decode(data_str)
+        # Cheap guard: if already small (<300KB), keep original to avoid recompression artifacts
+        if len(raw) < 300 * 1024:
+            return b64 if b64.startswith("data:") else f"data:image/jpeg;base64,{data_str}"
+        img = Image.open(io.BytesIO(raw))
+        # Convert (RGBA / P) to RGB JPEG
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        # Resize if too big
+        w, h = img.size
+        if max(w, h) > max_side:
+            ratio = max_side / float(max(w, h))
+            img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=quality, optimize=True, progressive=True)
+        return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning("[compress_evidencia] failed: %s", e)
+        return b64
+
 
 # ----------------- Auth utils -----------------
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -1407,6 +1444,9 @@ async def update_pinpad(
     if not payload.evidencia_base64:
         raise HTTPException(status_code=400, detail="Evidencia requerida")
 
+    # Compress incoming photo to keep BSON doc under 16MB
+    compressed_evidence = compress_evidencia(payload.evidencia_base64)
+
     materiales = payload.materiales_usados or []
     if not materiales and not payload.sin_suministros:
         raise HTTPException(
@@ -1421,7 +1461,6 @@ async def update_pinpad(
     consumo_results: List[dict] = []
     if materiales:
         try:
-            from suministros_module import _get_collections  # type: ignore
             inv_col = db.inventario_tecnico
             prod_col = db.productos
             consumos_log = db.consumos_materiales
@@ -1478,7 +1517,7 @@ async def update_pinpad(
     for pp in pin_pads:
         if pp.get("id") == pinpad_id:
             pp["completed"] = True
-            pp["evidencia_base64"] = payload.evidencia_base64
+            pp["evidencia_base64"] = compressed_evidence
             pp["notas"] = payload.notas
             pp["completed_at"] = now_iso()
             pp["uploaded_at"] = now_iso()  # for 30-min edit window
@@ -1524,12 +1563,39 @@ async def update_pinpad(
         set_data["closed_address"] = payload.address
         set_data["closed_accuracy_m"] = payload.accuracy_m
 
-    await ordenes_col.update_one({"id": orden_id}, {"$set": set_data})
+    # Best-effort: if doc would exceed 16MB BSON limit, retro-compress ALL
+    # other pin pad photos in this order so the update can succeed.
+    try:
+        await ordenes_col.update_one({"id": orden_id}, {"$set": set_data})
+    except Exception as e:
+        if "too large" in str(e).lower() or "DocumentTooLarge" in str(type(e).__name__):
+            logger.warning(
+                "[update_pinpad] doc too large for orden=%s — recompressing all photos",
+                orden_id,
+            )
+            shrunk = []
+            for pp in pin_pads:
+                if pp.get("evidencia_base64"):
+                    pp["evidencia_base64"] = compress_evidencia(
+                        pp["evidencia_base64"], max_side=800, quality=40
+                    )
+                shrunk.append(pp)
+            set_data["pin_pads"] = shrunk
+            try:
+                await ordenes_col.update_one({"id": orden_id}, {"$set": set_data})
+            except Exception as e2:
+                logger.error("[update_pinpad] still too large after shrink: %s", e2)
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "Las fotos pesan demasiado para guardarlas en una sola orden. "
+                        "Vuelve a tomar la foto con menor calidad o contacta al admin."
+                    ),
+                )
+        else:
+            raise
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
     return await enrich_orden(o)
-
-
-@api_router.patch("/tecnico/ordenes/{orden_id}/finalizar")
 async def finalizar_orden(
     orden_id: str, payload: OrdenFinalizar, tec: dict = Depends(require_tecnico)
 ):

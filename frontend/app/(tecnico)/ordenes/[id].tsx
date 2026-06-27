@@ -44,6 +44,10 @@ export default function TecnicoOrdenDetalle() {
   >([]);
   const [sinSuministros, setSinSuministros] = useState(false);
   const [matPickerOpen, setMatPickerOpen] = useState(false);
+  // Inline error displayed INSIDE the evidence sheet (toasts are rendered
+  // outside the Modal layer so they would be hidden behind it).
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  const [sheetInfo, setSheetInfo] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +91,8 @@ export default function TecnicoOrdenDetalle() {
     setNotas("");
     setMaterialesUsados([]);
     setSinSuministros(false);
+    setSheetError(null);
+    setSheetInfo(null);
     setEvidenceOpen(true);
   };
 
@@ -217,14 +223,15 @@ export default function TecnicoOrdenDetalle() {
   };
 
   const confirmarPp = async () => {
+    setSheetError(null);
+    setSheetInfo(null);
     if (!foto || !selectedPp) {
-      showToast("Adjunta una foto de evidencia", "error");
+      setSheetError("Adjunta una foto de evidencia.");
       return;
     }
     if (materialesUsados.length === 0 && !sinSuministros) {
-      showToast(
-        'Selecciona los materiales utilizados o marca "No se utilizaron suministros".',
-        "error"
+      setSheetError(
+        'Selecciona los materiales utilizados o marca "No se utilizaron suministros".'
       );
       return;
     }
@@ -249,19 +256,20 @@ export default function TecnicoOrdenDetalle() {
       };
       if (willClose) {
         try {
-          showToast("Solicitando ubicación...", "info");
+          setSheetInfo("Solicitando ubicación...");
           const { captureLocation } = await import("@/src/utils/geolocation");
           const loc = await captureLocation();
           payload.lat = loc.lat;
           payload.lng = loc.lng;
           payload.accuracy_m = loc.accuracy;
           payload.address = loc.address;
+          setSheetInfo(null);
         } catch (geoErr: any) {
           setActionLoading(false);
-          showToast(
+          setSheetInfo(null);
+          setSheetError(
             geoErr?.message ||
-              "Ubicación obligatoria para cerrar la orden. Autoriza la ubicación.",
-            "error"
+              "Ubicación obligatoria para cerrar la orden. Autoriza la ubicación."
           );
           return;
         }
@@ -273,7 +281,6 @@ export default function TecnicoOrdenDetalle() {
       );
       setOrden(r.data);
 
-      // Stock deduction now happens server-side atomically.
       // Refresh local stock cache.
       if (materialesUsados.length > 0) {
         try {
@@ -299,8 +306,20 @@ export default function TecnicoOrdenDetalle() {
       setNotas("");
       setMaterialesUsados([]);
       setSinSuministros(false);
+      setSheetError(null);
+      setSheetInfo(null);
     } catch (e: any) {
-      showToast(e?.response?.data?.detail || "Error", "error");
+      const detail = e?.response?.data?.detail;
+      const status = e?.response?.status;
+      let msg = detail || e?.message || "Error inesperado";
+      if (status === 413 || /too large|demasiado/i.test(String(detail || ""))) {
+        msg =
+          "La foto pesa demasiado. Tómala de nuevo con menos calidad o usa una foto distinta.";
+      } else if (status === 500) {
+        msg =
+          "El servidor no pudo guardar esta foto (posiblemente muy grande). Intenta tomarla nuevamente.";
+      }
+      setSheetError(msg);
     } finally {
       setActionLoading(false);
     }
@@ -527,13 +546,33 @@ export default function TecnicoOrdenDetalle() {
       {/* Evidence sheet */}
       <FormSheet
         visible={evidenceOpen}
-        onClose={() => setEvidenceOpen(false)}
+        onClose={() => {
+          setEvidenceOpen(false);
+          setSheetError(null);
+          setSheetInfo(null);
+        }}
         title={`Pin Pad ${selectedPp?.ddll || ""}`}
         testID="evidencia-sheet"
       >
         <Text style={styles.helpText}>
           Adjunta foto del trabajo realizado en este pin pad.
         </Text>
+
+        {sheetError && (
+          <View style={styles.sheetErrorBox} testID="sheet-error">
+            <Ionicons name="alert-circle" size={16} color={colors.danger} />
+            <Text style={styles.sheetErrorText}>{sheetError}</Text>
+            <TouchableOpacity onPress={() => setSheetError(null)}>
+              <Ionicons name="close" size={14} color={colors.danger} />
+            </TouchableOpacity>
+          </View>
+        )}
+        {sheetInfo && !sheetError && (
+          <View style={styles.sheetInfoBox} testID="sheet-info">
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.sheetInfoText}>{sheetInfo}</Text>
+          </View>
+        )}
 
         {foto ? (
           <View style={{ gap: spacing.sm }}>
@@ -976,6 +1015,30 @@ const styles = StyleSheet.create({
   matSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
   matAdd: {
     flexDirection: "row",
+  sheetErrorBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: "rgba(220,38,38,0.3)",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  sheetErrorText: { color: colors.danger, fontSize: fontSize.sm, flex: 1, fontWeight: "600" },
+  sheetInfoBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.primarySoft,
+    borderWidth: 1,
+    borderColor: "rgba(37,99,235,0.25)",
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  sheetInfoText: { color: colors.primary, fontSize: fontSize.sm, flex: 1, fontWeight: "600" },
     alignItems: "center",
     gap: 4,
     backgroundColor: colors.primary,
