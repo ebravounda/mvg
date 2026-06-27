@@ -107,6 +107,16 @@ export const shadow = {
 export const MVG_LOGO_URL =
   "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/p28a1tra_MVG_Computacion_logo_blanco_transparente.png";
 
+// White-on-black logo — use on DARK backgrounds with mixBlendMode: 'lighten'
+// to drop the black background.
+export const MVG_LOGO_LIGHT =
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/p28a1tra_MVG_Computacion_logo_blanco_transparente.png";
+
+// Blue-on-white logo — use on LIGHT backgrounds with mixBlendMode: 'multiply'
+// to drop the white background.
+export const MVG_LOGO_DARK =
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/glusuoyb_136dbcc7-95bc-463a-9c68-fd16ad42a695.png";
+
 export const statusLabels: Record<string, string> = {
   pendiente: "Pendiente",
   en_progreso: "En progreso",

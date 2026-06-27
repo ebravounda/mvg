@@ -22,7 +22,8 @@ import {
   radius,
   fontSize,
   shadow,
-  MVG_LOGO_URL,
+  MVG_LOGO_LIGHT,
+  MVG_LOGO_DARK,
 } from "@/src/theme";
 
 export default function LoginScreen() {
@@ -60,14 +61,12 @@ export default function LoginScreen() {
     <View style={[styles.card, isDesktop && styles.cardDesktop]}>
       {!isDesktop && (
         <View style={styles.mobileBrand}>
-          <View style={styles.mobileLogoBg}>
-            <Image
-              source={{ uri: MVG_LOGO_URL }}
-              style={styles.mobileLogo}
-              resizeMode="contain"
-              testID="login-logo"
-            />
-          </View>
+          <Image
+            source={{ uri: MVG_LOGO_DARK }}
+            style={styles.mobileLogo}
+            resizeMode="contain"
+            testID="login-logo"
+          />
         </View>
       )}
 
@@ -174,7 +173,7 @@ export default function LoginScreen() {
           <View style={styles.brandPanelInner}>
             <View style={styles.brandHeader}>
               <Image
-                source={{ uri: MVG_LOGO_URL }}
+                source={{ uri: MVG_LOGO_LIGHT }}
                 style={styles.brandLogo}
                 resizeMode="contain"
               />
@@ -280,11 +279,11 @@ const styles = StyleSheet.create({
     marginBottom: 56,
   },
   brandLogo: {
-    width: 210,
-    height: 210,
-    backgroundColor: "#000",
-    borderRadius: 24,
-    overflow: "hidden",
+    width: 230,
+    height: 230,
+    ...(Platform.OS === "web"
+      ? ({ mixBlendMode: "lighten" } as any)
+      : {}),
   },
   brandName: {
     color: "#fff",
@@ -374,21 +373,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
   },
   mobileBrand: { alignItems: "center", marginBottom: spacing.xl },
-  mobileLogoBg: {
-    width: 168,
-    height: 168,
-    backgroundColor: "#000",
-    borderRadius: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOpacity: 0.25,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 8,
+  mobileLogo: {
+    width: 200,
+    height: 200,
+    ...(Platform.OS === "web"
+      ? ({ mixBlendMode: "multiply" } as any)
+      : {}),
   },
-  mobileLogo: { width: 158, height: 158 },
 
   // ---- CARD ----
   card: {

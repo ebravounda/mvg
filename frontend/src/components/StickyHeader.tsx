@@ -5,11 +5,12 @@ import {
   Image,
   StyleSheet,
   TouchableOpacity,
+  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { colors, spacing, fontSize, MVG_LOGO_URL, radius } from "@/src/theme";
+import { colors, spacing, fontSize, MVG_LOGO_DARK, radius } from "@/src/theme";
 import { useAuth } from "@/src/context/AuthContext";
 import { useResponsive } from "@/src/hooks/useResponsive";
 
@@ -85,13 +86,11 @@ export const StickyHeader: React.FC<Props> = ({
               <Ionicons name="chevron-back" size={22} color={colors.textMain} />
             </TouchableOpacity>
           ) : (
-            <View style={styles.logoBadge}>
-              <Image
-                source={{ uri: MVG_LOGO_URL }}
-                style={styles.logo}
-                resizeMode="contain"
-              />
-            </View>
+            <Image
+              source={{ uri: MVG_LOGO_DARK }}
+              style={styles.logo}
+              resizeMode="contain"
+            />
           )}
           {title ? (
             <Text style={styles.title} numberOfLines={1}>
@@ -138,17 +137,14 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   right: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  logoBadge: {
-    width: 44,
+  logoBadge: { width: 0, height: 0 },
+  logo: {
+    width: 60,
     height: 44,
-    backgroundColor: "#000",
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    padding: 4,
+    ...(Platform.OS === "web"
+      ? ({ mixBlendMode: "multiply" } as any)
+      : {}),
   },
-  logo: { width: 36, height: 36 },
   title: {
     color: colors.textMain,
     fontSize: fontSize.lg,

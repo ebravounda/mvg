@@ -1,8 +1,8 @@
 import React from "react";
-import { View, Text, Image, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
+import { View, Text, Image, StyleSheet, TouchableOpacity, ScrollView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, usePathname } from "expo-router";
-import { colors, spacing, radius, fontSize, MVG_LOGO_URL } from "@/src/theme";
+import { colors, spacing, radius, fontSize, MVG_LOGO_LIGHT } from "@/src/theme";
 import { useAuth } from "@/src/context/AuthContext";
 
 const NAV: { label: string; icon: any; route: string; match: string[] }[] = [
@@ -28,9 +28,11 @@ export const AdminSidebar: React.FC = () => {
     <View style={styles.wrap} testID="admin-sidebar">
       {/* Brand */}
       <View style={styles.brand}>
-        <View style={styles.brandLogoWrap}>
-          <Image source={{ uri: MVG_LOGO_URL }} style={styles.brandLogo} resizeMode="contain" />
-        </View>
+        <Image
+          source={{ uri: MVG_LOGO_LIGHT }}
+          style={styles.brandLogo}
+          resizeMode="contain"
+        />
       </View>
 
       <View style={styles.divider} />
@@ -113,16 +115,17 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
   },
   brandLogoWrap: {
-    width: 160,
-    height: 90,
-    backgroundColor: "#000",
-    borderRadius: radius.md,
+    // kept for compatibility (unused now)
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
-    padding: 6,
   },
-  brandLogo: { width: 148, height: 78 },
+  brandLogo: {
+    width: 150,
+    height: 100,
+    ...(Platform.OS === "web"
+      ? ({ mixBlendMode: "lighten" } as any)
+      : {}),
+  },
   brandTitle: {
     color: colors.sidebarTextActive,
     fontSize: fontSize.lg,
