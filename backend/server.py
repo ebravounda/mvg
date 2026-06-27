@@ -402,6 +402,33 @@ async def create_tecnico(payload: TecnicoCreate, _: dict = Depends(require_admin
 
     user = clean_user(new_user)
     user["welcome_email"] = welcome_result
+
+    # Send credentials via WhatsApp (best-effort)
+    wa_result = None
+    if payload.telefono:
+        try:
+            nombre_completo = f"{payload.nombre} {payload.apellidos}".strip()
+            msg = (
+                f"🔐 *MVG Computación - Tu cuenta*\n\n"
+                f"Hola {nombre_completo},\n\n"
+                f"Tu cuenta ha sido creada. Estas son tus credenciales:\n\n"
+                f"📧 Email: {payload.email}\n"
+                f"🔑 Contraseña: *{payload.password}*\n\n"
+                f"🌐 Accede en: https://mvg.goroky.es\n\n"
+                f"⚠️ Por seguridad, cambia tu contraseña al iniciar sesión.\n"
+                f"Revisa la plataforma varias veces al día para mantener "
+                f"tus órdenes al día."
+            )
+            wa_result = await send_whatsapp(payload.telefono, msg)
+            logger.info(
+                "[WhatsApp create_tecnico] %s -> %s",
+                payload.telefono,
+                wa_result.get("ok") if isinstance(wa_result, dict) else "err",
+            )
+        except Exception as e:
+            logger.warning("[WhatsApp create_tecnico] error: %s", e)
+            wa_result = {"ok": False, "error": str(e)}
+    user["whatsapp_welcome"] = wa_result
     return user
 
 
