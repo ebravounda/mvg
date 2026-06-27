@@ -1,0 +1,40 @@
+# MVG Computación — Plesk production stack
+# Backend reachable at 127.0.0.1:${BACKEND_PORT} (NO public expose)
+# Frontend (PWA) reachable at 127.0.0.1:${FRONTEND_PORT}
+# MongoDB compartida del host: bd mvg_db, no toca tramilex/gym24/ingresoqr
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: mvg-backend:latest
+    container_name: mvg_backend
+    restart: unless-stopped
+    env_file:
+      - ./.env.production
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8101}:8001"
+    extra_hosts:
+      # Permite a Mongo del host (127.0.0.1 del host) ser alcanzable desde el contenedor
+      - "host.docker.internal:host-gateway"
+    networks:
+      - mvg_net
+
+  frontend:
+    image: nginx:alpine
+    container_name: mvg_frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend-dist:/usr/share/nginx/html:ro
+      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3101}:80"
+    depends_on:
+      - backend
+    networks:
+      - mvg_net
+
+networks:
+  mvg_net:
+    driver: bridge
+    name: mvg_net

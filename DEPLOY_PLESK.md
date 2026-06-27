@@ -1,262 +1,235 @@
-# 🚀 Guía de Despliegue MVG en Servidor Plesk
+# 🚀 Despliegue MVG Computación → `mvg.goroky.es` (Plesk)
 
-Esta guía explica cómo desplegar la app **MVG Computación** (Backend FastAPI + Frontend Expo PWA + MongoDB) en un servidor con **Plesk Obsidian**.
-
-> ⚡ **Recomendación rápida**: Si tu servidor tiene Docker habilitado en Plesk, ve directo a la **Opción B (Docker)** — es la más fácil y la más parecida al entorno actual.
-
----
-
-## 📦 Pre-requisitos en tu servidor Plesk
-
-1. **Subscription / dominio** ya creado (ej. `mvg.tudominio.cl`).
-2. **SSL Let's Encrypt** habilitado en el dominio.
-3. **Node.js ≥ 20** instalado vía Plesk (Tools & Settings → Updates → Add component → Node.js).
-4. **Python 3.11+** disponible (Plesk lo incluye o lo añades como extensión).
-5. **MongoDB** (dos opciones):
-   - **Opción Atlas (recomendada)**: crear cluster gratis en https://cloud.mongodb.com y obtener `MONGO_URL`.
-   - **MongoDB local en Plesk**: instalar `mongodb-org` vía SSH y dejarlo en `mongodb://127.0.0.1:27017`.
+> **Aislamiento garantizado**: este despliegue NO toca tu MongoDB existente
+> (tramilex, gym24.app, ingresoqr.com). Usa una BD **nueva** llamada `mvg_db`
+> en la misma instancia y puertos `127.0.0.1` propios.
 
 ---
 
-## 🧱 Estructura del proyecto
+## 📋 Resumen
 
-```
-/app
-├── backend/         # FastAPI - se sirve en puerto 8001
-│   ├── server.py
-│   ├── suministros_module.py
-│   ├── email_service.py
-│   ├── whatsapp_service.py
-│   ├── requirements.txt
-│   └── .env
-└── frontend/        # Expo PWA - se exporta a /dist
-    ├── app/
-    ├── src/
-    ├── package.json
-    └── .env
-```
+| Componente | Detalle |
+|---|---|
+| Subdominio | `https://mvg.goroky.es` |
+| Repo Git | https://github.com/ebravounda/mvg |
+| Stack | FastAPI (Python 3.11) + Expo PWA estática + MongoDB |
+| BD | `mvg_db` (nueva en tu Mongo local) |
+| Backend port | `127.0.0.1:8101` (configurable) |
+| Frontend port | `127.0.0.1:3101` (configurable) |
+| Aislamiento | Docker Compose en `/var/www/vhosts/.../mvg` |
 
 ---
 
-# ✅ OPCIÓN A — Despliegue tradicional (Passenger Python + Site estático)
-
-### A.1 — Backend FastAPI con Passenger
-
-1. **Subir el código** del directorio `/app/backend/` a `/httpdocs/api/` (o a un dominio aparte como `api.mvg.tudominio.cl`).
-
-2. En Plesk → Tu dominio → **Python**:
-   - **Document Root**: `/httpdocs/api`
-   - **Application Mode**: `production`
-   - **Application Startup File**: `passenger_wsgi.py`
-   - **Application Entry Point**: `application`
-   - **Python version**: 3.11
-
-3. Crear `/httpdocs/api/passenger_wsgi.py`:
-   ```python
-   import sys, os
-   INTERP = os.path.expanduser("~/api/venv/bin/python")
-   if sys.executable != INTERP:
-       os.execl(INTERP, INTERP, *sys.argv)
-
-   sys.path.insert(0, os.path.dirname(__file__))
-
-   from server import app as application
-   ```
-
-4. Instalar dependencias (vía SSH):
-   ```bash
-   cd ~/httpdocs/api
-   python3.11 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   pip install passenger
-   ```
-
-5. Crear `/httpdocs/api/.env` con:
-   ```
-   MONGO_URL=mongodb+srv://<user>:<pass>@cluster.mongodb.net/mvg
-   JWT_SECRET=<genera-uno-largo-seguro>
-   RESEND_API_KEY=<tu-resend-api-key>
-   WHATSAPP_API_KEY=<tu-mitiendapro-api-key>
-   WHATSAPP_INSTANCE=<tu-instance>
-   CORS_ORIGINS=https://mvg.tudominio.cl
-   ```
-
-6. **Important**: En Plesk → tu dominio → **Apache & nginx Settings** → "Additional nginx directives":
-   ```nginx
-   location /api/ {
-       proxy_pass http://127.0.0.1:8001;
-       proxy_set_header Host $host;
-       proxy_set_header X-Real-IP $remote_addr;
-       client_max_body_size 50M;
-   }
-   ```
-
-7. Reiniciar la app desde Plesk → Python → **Restart App**.
-
-### A.2 — Frontend Expo como sitio estático
-
-1. **Build local** (en tu PC o en SSH del servidor):
-   ```bash
-   cd /app/frontend
-   echo "EXPO_PUBLIC_BACKEND_URL=https://mvg.tudominio.cl" > .env
-   yarn install
-   npx expo export --platform web
-   ```
-   Esto genera `dist/` con la PWA estática.
-
-2. Subir el contenido de `dist/` a `/httpdocs/` (o `/httpdocs/app/` si el API va a la raíz).
-
-3. En Plesk → **Apache & nginx Settings** → añadir fallback SPA:
-   ```nginx
-   location / {
-       try_files $uri $uri/ /index.html;
-   }
-   ```
-
-4. Listo: visitar `https://mvg.tudominio.cl` y debería funcionar.
-
----
-
-# 🐳 OPCIÓN B — Despliegue con Docker (Recomendado)
-
-Si Plesk tiene la extensión **Docker** instalada (Plesk Obsidian la trae):
-
-### B.1 — Crear `/opt/mvg/docker-compose.yml`:
-
-```yaml
-version: "3.9"
-services:
-  mongo:
-    image: mongo:7
-    restart: unless-stopped
-    volumes:
-      - mongo_data:/data/db
-    networks: [mvg]
-
-  backend:
-    build: ./backend
-    restart: unless-stopped
-    env_file: ./backend/.env
-    environment:
-      - MONGO_URL=mongodb://mongo:27017/mvg
-    depends_on: [mongo]
-    ports: ["127.0.0.1:8001:8001"]
-    networks: [mvg]
-
-  frontend:
-    image: nginx:alpine
-    restart: unless-stopped
-    volumes:
-      - ./frontend-dist:/usr/share/nginx/html:ro
-      - ./nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
-    ports: ["127.0.0.1:3000:80"]
-    networks: [mvg]
-
-volumes:
-  mongo_data:
-
-networks:
-  mvg:
-```
-
-### B.2 — `backend/Dockerfile`:
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-EXPOSE 8001
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
-```
-
-### B.3 — `nginx-spa.conf`:
-
-```nginx
-server {
-  listen 80;
-  root /usr/share/nginx/html;
-  index index.html;
-  location / {
-    try_files $uri $uri/ /index.html;
-  }
-}
-```
-
-### B.4 — Build & deploy:
+## 🧭 Paso 1 — SSH al servidor y chequear puertos libres
 
 ```bash
-# Build PWA
-cd /app/frontend
-echo "EXPO_PUBLIC_BACKEND_URL=https://mvg.tudominio.cl" > .env
-yarn install && npx expo export --platform web
-# Copia el dist resultante a /opt/mvg/frontend-dist
-rsync -av dist/ /opt/mvg/frontend-dist/
-
-# Levantar todo
-cd /opt/mvg
-docker compose up -d --build
+ssh tu_usuario@goroky.es
+cd /tmp
+git clone https://github.com/ebravounda/mvg.git mvg_temp
+bash mvg_temp/deploy/check-ports.sh
 ```
 
-### B.5 — Plesk → Apache & nginx Settings → Reverse-proxy:
+El script imprime los puertos en uso y te sugiere puertos LIBRES (ej. `8101`, `3101`).
+Si están ocupados, te avisa cuál usar (`8102`, `8103`…).
+
+**Anota** los puertos sugeridos. Los necesitarás en el paso 4.
+
+---
+
+## 🧭 Paso 2 — Crear el subdominio en Plesk
+
+1. Plesk → **Dominios** → **Añadir subdominio**
+2. Subdominio: `mvg` &nbsp; · &nbsp; Dominio padre: `goroky.es`
+3. Document root: `/httpdocs/mvg` (lo creará automáticamente — lo dejaremos vacío, sirve para SSL)
+4. Click **Aceptar**.
+5. Plesk → `mvg.goroky.es` → **Certificado SSL/TLS** → **Get free using Let's Encrypt** → activar.
+
+---
+
+## 🧭 Paso 3 — Clonar el repo en el servidor
+
+```bash
+# Dirección típica de Plesk:
+cd /var/www/vhosts/goroky.es
+
+# Clonamos el repo (ajustá si tu usuario Plesk no tiene permisos aquí, podés usar tu home)
+git clone https://github.com/ebravounda/mvg.git mvg
+cd mvg
+```
+
+> 💡 Alternativa: Plesk → tu subdominio → **Git** → conectar `https://github.com/ebravounda/mvg`
+> branch `main`, deployment path `/mvg`. Plesk hará pull automático cuando hagas push.
+
+---
+
+## 🧭 Paso 4 — Configurar variables de entorno
+
+```bash
+cd /var/www/vhosts/goroky.es/mvg/deploy
+
+# 1. Variables Docker (puertos locales)
+cp .env.docker.example .env.docker
+nano .env.docker
+# → Editar BACKEND_PORT y FRONTEND_PORT con los que sugirió check-ports.sh
+
+# 2. Variables de la app (Mongo, Resend, JWT, WhatsApp)
+cp .env.production.example .env.production
+nano .env.production
+# → Cambiar:
+#    JWT_SECRET   →  ejecutá:  openssl rand -hex 32   y pegá el resultado
+#    WHATSAPP_API_KEY / WHATSAPP_INSTANCE  → tus credenciales mitiendapro
+#    ADMIN_PASSWORD  → cambiar a algo seguro
+```
+
+**MongoDB**: por defecto el contenedor se conecta al Mongo del **host** vía
+`host.docker.internal:27017` con `DB_NAME=mvg_db`. **No toca** tramilex,
+gym24, ingresoqr (cada uno tiene su propia BD nombrada distinto).
+
+Si tu Mongo tiene auth, edita `MONGO_URL` así:
+```
+MONGO_URL=mongodb://USER:PASS@host.docker.internal:27017/?authSource=admin
+```
+
+---
+
+## 🧭 Paso 5 — Build del PWA + levantar Docker
+
+```bash
+cd /var/www/vhosts/goroky.es/mvg
+
+# Configurar URL del backend para que el PWA llame a /api del mismo dominio
+cat > frontend/.env.production <<'EOF'
+EXPO_PUBLIC_BACKEND_URL=https://mvg.goroky.es
+EOF
+
+# Deploy completo
+bash deploy/deploy.sh
+```
+
+Esto:
+1. Compila el PWA con `npx expo export --platform web` → genera `deploy/frontend-dist/`
+2. Construye la imagen Docker del backend
+3. Levanta los 2 contenedores: `mvg_backend` y `mvg_frontend`
+4. Backend escucha en `127.0.0.1:8101`, Frontend en `127.0.0.1:3101`
+
+Verifica:
+```bash
+docker ps | grep mvg_
+curl -s http://127.0.0.1:8101/api/   # → {"message":"..."}
+curl -sI http://127.0.0.1:3101/      # → 200 OK
+```
+
+---
+
+## 🧭 Paso 6 — Configurar reverse proxy en Plesk
+
+Plesk → `mvg.goroky.es` → **Apache & nginx Settings** →
+sección **"Additional nginx directives"** → pegar:
 
 ```nginx
-# PWA (frontend)
-location / {
-    proxy_pass http://127.0.0.1:3000;
+# ===== MVG Computación =====
+client_max_body_size 50M;
+proxy_read_timeout 120s;
+
+# API → backend Docker
+location /api/ {
+    proxy_pass http://127.0.0.1:8101;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 
-# API (backend)
-location /api/ {
-    proxy_pass http://127.0.0.1:8001;
+# Endpoints internos del backend que NO llevan /api (login, etc.)
+# (No aplica para MVG — todo va por /api/)
+
+# PWA (todo lo demás) → frontend Docker
+location / {
+    proxy_pass http://127.0.0.1:3101;
     proxy_set_header Host $host;
-    client_max_body_size 50M;
+    proxy_set_header X-Real-IP $remote_addr;
 }
 ```
 
-Habilita SSL Let's Encrypt en Plesk para `mvg.tudominio.cl` y ¡listo!
+Click **OK** y luego **Apply**. Plesk recarga nginx.
 
 ---
 
-## 🔐 Variables de entorno requeridas (backend `.env`)
+## ✅ Paso 7 — Verificación
 
-| Variable | Descripción | Ejemplo |
+1. Abrí `https://mvg.goroky.es` → debe cargar la PWA con el login.
+2. Login con `admin@mvg.cl` / tu nueva `ADMIN_PASSWORD`.
+3. Probá subir un Excel y crear una orden.
+4. Verificá que las otras webs (`tramilex`, `gym24`, `ingresoqr`) siguen funcionando:
+   ```bash
+   curl -sI https://tramilex.tu_dominio
+   curl -sI https://gym24.app
+   curl -sI https://ingresoqr.com
+   ```
+
+---
+
+## 🔁 Actualizar a una nueva versión
+
+Cuando hagas `git push` en GitHub:
+
+```bash
+cd /var/www/vhosts/goroky.es/mvg
+bash deploy/deploy.sh update
+```
+
+Eso hace `git pull` + rebuild del PWA + rebuild del backend + restart.
+
+---
+
+## 🆘 Comandos útiles
+
+```bash
+# Ver logs en vivo
+bash deploy/deploy.sh logs
+
+# Reiniciar sin rebuild
+bash deploy/deploy.sh restart
+
+# Ver consumo
+docker stats mvg_backend mvg_frontend
+
+# Acceder al contenedor backend
+docker exec -it mvg_backend bash
+
+# Verificar la BD aislada
+docker exec -it mvg_backend python -c \
+  "from server import db; import asyncio; \
+   asyncio.run(db.command('listCollections'))"
+```
+
+---
+
+## 🛡 Seguridad de aislamiento confirmada
+
+| Sistema existente | Su BD Mongo | ¿Afectado? |
 |---|---|---|
-| `MONGO_URL` | URL de conexión MongoDB | `mongodb+srv://user:pass@cluster.mongodb.net/mvg` |
-| `JWT_SECRET` | Secreto para firmar tokens JWT | Genera con `openssl rand -hex 32` |
-| `RESEND_API_KEY` | Clave de Resend (emails) | `re_xxxxxxxxxxx` |
-| `WHATSAPP_API_KEY` | Token mitiendapro.com | tu key |
-| `WHATSAPP_INSTANCE` | Instancia mitiendapro | `t2_xxxxxxxxx` |
-| `CORS_ORIGINS` | Dominios permitidos | `https://mvg.tudominio.cl` |
+| tramilex | (su propia BD) | ❌ NO — diferente nombre |
+| gym24.app | (su propia BD) | ❌ NO — diferente nombre |
+| ingresoqr.com | (su propia BD) | ❌ NO — diferente nombre |
+| **MVG (nuevo)** | **`mvg_db`** | ✅ Aislado |
+
+Mongo se conecta por host.docker.internal, **NO** modifica la config del
+servicio Mongo del host. Cada sistema usa su `DB_NAME` distinto.
 
 ---
 
-## 🧪 Verificación post-deploy
+## ⚠️ Troubleshooting rápido
 
-1. `curl https://mvg.tudominio.cl/api/` → debe devolver JSON `{"message":"MVG API"}`
-2. Abrir `https://mvg.tudominio.cl/login` → ver el logo MVG Computación.
-3. Login con `admin@mvg.cl` / `Admin123!`
-4. Verificar:
-   - Sidebar con logo
-   - Subir Excel
-   - WhatsApp se envía al asignar técnico
-   - Resend emails llegan en Suministros
-   - Geolocalización al finalizar orden
-
----
-
-## 🆘 Troubleshooting común
-
-| Problema | Solución |
-|---|---|
-| 502 Bad Gateway | Revisar logs del backend con `docker logs mvg-backend-1` o Plesk → Python → Logs |
-| CORS error en consola | Añadir tu dominio en `CORS_ORIGINS` y reiniciar backend |
-| MongoDB no conecta | Whitelist IP del servidor en MongoDB Atlas |
-| Imágenes no cargan | Aumentar `client_max_body_size 50M` en nginx |
-| `Resend 403` | Verificar dominio en https://resend.com/domains |
+| Síntoma | Causa | Solución |
+|---|---|---|
+| `502 Bad Gateway` | Backend no responde | `docker logs mvg_backend` |
+| `CORS error` en consola | Origen no permitido | Verificar `CORS_ORIGINS` en `.env.production` |
+| `Mongo connection refused` | host.docker.internal no resuelve | En Linux Plesk, ya está en `extra_hosts` del compose |
+| `port already allocated` | Otro servicio usa el puerto | Cambiar `BACKEND_PORT`/`FRONTEND_PORT` en `.env.docker` |
+| `Resend 403` | Dominio no verificado en Resend | https://resend.com/domains |
+| PWA carga pero sin datos | `EXPO_PUBLIC_BACKEND_URL` mal | Rebuild con la URL correcta |
 
 ---
 
-**¿Dudas?** El backend escucha en `127.0.0.1:8001` y el frontend en `127.0.0.1:3000`. Plesk solo necesita un reverse-proxy SSL al frente.
+¡Listo! Cualquier duda durante el despliegue, **ejecutá** los comandos arriba y pegame la salida que te interese.
