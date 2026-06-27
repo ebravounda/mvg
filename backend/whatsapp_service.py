@@ -113,10 +113,24 @@ def build_assignment_message(
     direccion: str,
     prioridad: str,
     fecha_limite: Optional[str],
+    pin_pads: Optional[list] = None,
 ) -> str:
     fecha_str = ""
     if fecha_limite:
         fecha_str = f"\n📅 Fecha límite: {fecha_limite}"
+
+    pp_section = ""
+    if pin_pads:
+        lines = []
+        for i, pp in enumerate(pin_pads, start=1):
+            ddll = (pp.get("ddll") or "").strip() or "—"
+            serie = (pp.get("serie") or "").strip()
+            extra = f" (S/N {serie})" if serie else ""
+            lines.append(f"  {i}. {ddll}{extra}")
+        pp_section = (
+            f"\n\n📟 Pin Pads a actualizar ({len(pin_pads)}):\n" + "\n".join(lines)
+        )
+
     return (
         f"🛠️ *Nueva orden asignada*\n\n"
         f"Hola {tecnico_nombre},\n"
@@ -125,6 +139,7 @@ def build_assignment_message(
         f"🏪 Comercio: {comercio} (CC {codigo_comercio})\n"
         f"📍 Dirección: {direccion}\n"
         f"⚠️ Prioridad: {prioridad.upper()}"
-        f"{fecha_str}\n\n"
-        f"Ingresa a la app *MVG Computación* para ver el detalle y tomar la evidencia."
+        f"{fecha_str}"
+        f"{pp_section}\n\n"
+        f"Ingresa a la app *MVG Computación* para tomar la evidencia."
     )
