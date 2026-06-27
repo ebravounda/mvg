@@ -42,6 +42,7 @@ export default function TecnicoOrdenDetalle() {
   const [materialesUsados, setMaterialesUsados] = useState<
     { sku: string; descripcion: string; cantidad: number; max: number }[]
   >([]);
+  const [sinSuministros, setSinSuministros] = useState(false);
   const [matPickerOpen, setMatPickerOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -85,6 +86,7 @@ export default function TecnicoOrdenDetalle() {
     setFoto(null);
     setNotas("");
     setMaterialesUsados([]);
+    setSinSuministros(false);
     setEvidenceOpen(true);
   };
 
@@ -185,7 +187,7 @@ export default function TecnicoOrdenDetalle() {
     );
     if (!ok) return;
     const res = await ImagePicker.launchCameraAsync({
-      quality: 0.6,
+      quality: 0.35,
       base64: true,
       allowsEditing: false,
     });
@@ -203,7 +205,7 @@ export default function TecnicoOrdenDetalle() {
     );
     if (!ok) return;
     const res = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.6,
+      quality: 0.35,
       base64: true,
       mediaTypes: ["images"],
       allowsEditing: false,
@@ -219,6 +221,13 @@ export default function TecnicoOrdenDetalle() {
       showToast("Adjunta una foto de evidencia", "error");
       return;
     }
+    if (materialesUsados.length === 0 && !sinSuministros) {
+      showToast(
+        'Selecciona los materiales utilizados o marca "No se utilizaron suministros".',
+        "error"
+      );
+      return;
+    }
     setActionLoading(true);
     try {
       // Detect if this confirmation will close the order (last incomplete pp)
@@ -228,7 +237,16 @@ export default function TecnicoOrdenDetalle() {
         ).length;
       const willClose = remainingAfter === 0;
 
-      const payload: any = { evidencia_base64: foto, notas };
+      const payload: any = {
+        evidencia_base64: foto,
+        notas,
+        materiales_usados: materialesUsados.map((m) => ({
+          sku: m.sku,
+          descripcion: m.descripcion,
+          cantidad: m.cantidad,
+        })),
+        sin_suministros: sinSuministros && materialesUsados.length === 0,
+      };
       if (willClose) {
         try {
           showToast("Solicitando ubicación...", "info");
@@ -255,24 +273,13 @@ export default function TecnicoOrdenDetalle() {
       );
       setOrden(r.data);
 
-      // Register material consumption (deduct from stock) if any materials selected
+      // Stock deduction now happens server-side atomically.
+      // Refresh local stock cache.
       if (materialesUsados.length > 0) {
         try {
-          await api.post("/tecnico/consumos", {
-            orden_id: id,
-            pin_pad_idx: undefined,
-            items: materialesUsados.map((m) => ({
-              sku: m.sku,
-              cantidad: m.cantidad,
-            })),
-          });
-          // refresh stock
           const ns = await api.get("/tecnico/inventario");
           setStock(ns.data);
-        } catch (e: any) {
-          console.log("consumo error", e);
-          showToast("Aviso: error registrando consumo de materiales", "info");
-        }
+        } catch {}
       }
 
       const stillPending = (r.data.pin_pads || []).filter(
@@ -290,6 +297,8 @@ export default function TecnicoOrdenDetalle() {
       setSelectedPp(null);
       setFoto(null);
       setNotas("");
+      setMaterialesUsados([]);
+      setSinSuministros(false);
     } catch (e: any) {
       showToast(e?.response?.data?.detail || "Error", "error");
     } finally {
@@ -574,25 +583,60 @@ export default function TecnicoOrdenDetalle() {
         <View style={{ gap: 8 }}>
           <View style={styles.matHead}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Materiales utilizados</Text>
+              <Text style={styles.fieldLabel}>Materiales utilizados *</Text>
               <Text style={styles.matSub}>
                 Se descontarán automáticamente de tu stock
               </Text>
             </View>
             <TouchableOpacity
               testID="add-material-btn"
-              onPress={() => setMatPickerOpen(true)}
-              style={styles.matAdd}
+              onPress={() => {
+                setSinSuministros(false);
+                setMatPickerOpen(true);
+              }}
+              style={[styles.matAdd, stock.length === 0 && { opacity: 0.5 }]}
               disabled={stock.length === 0}
             >
               <Ionicons name="add" size={14} color="#fff" />
               <Text style={styles.matAddText}>Agregar</Text>
             </TouchableOpacity>
           </View>
-          {stock.length === 0 && (
+
+          {/* "No se utilizaron suministros" toggle */}
+          <TouchableOpacity
+            testID="no-supplies-toggle"
+            onPress={() => {
+              if (!sinSuministros) setMaterialesUsados([]);
+              setSinSuministros((v) => !v);
+            }}
+            style={[
+              styles.noSupBox,
+              sinSuministros && styles.noSupBoxActive,
+            ]}
+            activeOpacity={0.7}
+          >
+            <View
+              style={[
+                styles.checkBox,
+                sinSuministros && { backgroundColor: colors.primary, borderColor: colors.primary },
+              ]}
+            >
+              {sinSuministros && (
+                <Ionicons name="checkmark" size={14} color="#fff" />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.noSupTitle}>No se utilizaron suministros</Text>
+              <Text style={styles.noSupSub}>
+                Marca esto si no usaste ningún material para este pin pad
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {stock.length === 0 && !sinSuministros && (
             <Text style={styles.matEmpty}>
               No tienes stock asignado. Solicita suministros desde la pestaña
-              "Suministros".
+              "Suministros" o marca "No se utilizaron suministros".
             </Text>
           )}
           {materialesUsados.map((m) => (
@@ -637,7 +681,7 @@ export default function TecnicoOrdenDetalle() {
           onPress={confirmarPp}
           loading={actionLoading}
           variant="accent"
-          disabled={!foto}
+          disabled={!foto || (materialesUsados.length === 0 && !sinSuministros)}
           testID="pp-confirmar"
           icon={<Ionicons name="checkmark" size={18} color="#fff" />}
         />
@@ -950,6 +994,32 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  noSupBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  noSupBoxActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  checkBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.border,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  noSupTitle: { color: colors.textMain, fontSize: fontSize.sm, fontWeight: "700" },
+  noSupSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
   matRow: {
     flexDirection: "row",
     alignItems: "center",

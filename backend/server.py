@@ -208,6 +208,12 @@ class OrdenFinalizar(BaseModel):
     accuracy_m: Optional[float] = None
 
 
+class MaterialUsadoItem(BaseModel):
+    sku: str
+    descripcion: Optional[str] = None
+    cantidad: int
+
+
 class PinPadUpdate(BaseModel):
     evidencia_base64: str
     notas: Optional[str] = None
@@ -218,6 +224,10 @@ class PinPadUpdate(BaseModel):
     lng: Optional[float] = None
     address: Optional[str] = None
     accuracy_m: Optional[float] = None
+    # Materials used while attending THIS pin pad. Either a non-empty list
+    # OR sin_suministros=True is required.
+    materiales_usados: Optional[List[MaterialUsadoItem]] = None
+    sin_suministros: Optional[bool] = False
 
 
 class PinPadEditPhoto(BaseModel):
@@ -1383,7 +1393,12 @@ async def update_pinpad(
     payload: PinPadUpdate,
     tec: dict = Depends(require_tecnico),
 ):
-    """Técnico marca UN pin pad como actualizado con evidencia fotográfica."""
+    """Técnico marca UN pin pad como actualizado con evidencia fotográfica.
+
+    Requirements:
+    - evidencia_base64 (foto)
+    - materiales_usados (>=1 ítem) OR sin_suministros=True
+    """
     o = await ordenes_col.find_one({"id": orden_id})
     if not o:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
@@ -1391,6 +1406,71 @@ async def update_pinpad(
         raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
     if not payload.evidencia_base64:
         raise HTTPException(status_code=400, detail="Evidencia requerida")
+
+    materiales = payload.materiales_usados or []
+    if not materiales and not payload.sin_suministros:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Selecciona los materiales utilizados o marca "
+                "'No se utilizaron suministros'."
+            ),
+        )
+
+    # ---- Deduct stock per material (does not block submission on shortage) ----
+    consumo_results: List[dict] = []
+    if materiales:
+        try:
+            from suministros_module import _get_collections  # type: ignore
+            inv_col = db.inventario_tecnico
+            prod_col = db.productos
+            consumos_log = db.consumos_materiales
+            for item in materiales:
+                sku = (item.sku or "").strip()
+                if not sku or item.cantidad <= 0:
+                    continue
+                inv = await inv_col.find_one(
+                    {"tecnico_id": tec["id"], "sku": sku}
+                )
+                prod = await prod_col.find_one({"sku": sku})
+                desc = (prod or {}).get("descripcion") or item.descripcion
+                current_qty = inv["cantidad"] if inv else 0
+                new_qty = current_qty - item.cantidad
+                negativo = new_qty < 0
+                if inv:
+                    await inv_col.update_one(
+                        {"id": inv["id"]},
+                        {"$set": {"cantidad": new_qty, "updated_at": now_iso()}},
+                    )
+                else:
+                    await inv_col.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "tecnico_id": tec["id"],
+                        "sku": sku,
+                        "descripcion": desc,
+                        "cantidad": new_qty,
+                        "created_at": now_iso(),
+                        "updated_at": now_iso(),
+                    })
+                consumo_results.append({
+                    "sku": sku,
+                    "descripcion": desc,
+                    "cantidad": item.cantidad,
+                    "nuevo_stock": new_qty,
+                    "negativo": negativo,
+                })
+            # Audit log
+            await consumos_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "tecnico_id": tec["id"],
+                "orden_id": orden_id,
+                "pin_pad_id": pinpad_id,
+                "items": [it.model_dump() for it in materiales],
+                "results": consumo_results,
+                "fecha": now_iso(),
+            })
+        except Exception as e:
+            logger.warning("[Consumo pinpad] error: %s", e)
 
     pin_pads = o.get("pin_pads") or []
     found = False
@@ -1402,6 +1482,15 @@ async def update_pinpad(
             pp["notas"] = payload.notas
             pp["completed_at"] = now_iso()
             pp["uploaded_at"] = now_iso()  # for 30-min edit window
+            pp["materiales_usados"] = [
+                {
+                    "sku": (item.sku or "").strip(),
+                    "descripcion": item.descripcion,
+                    "cantidad": item.cantidad,
+                }
+                for item in materiales
+            ]
+            pp["sin_suministros"] = bool(payload.sin_suministros) and not materiales
             if payload.lat is not None and payload.lng is not None:
                 pp["lat"] = payload.lat
                 pp["lng"] = payload.lng

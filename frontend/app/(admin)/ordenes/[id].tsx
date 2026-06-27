@@ -239,6 +239,33 @@ export default function OrdenDetalle() {
                     />
                   ) : null}
                   {pp.notas ? <Text style={styles.ppNotas}>📝 {pp.notas}</Text> : null}
+                  {pp.completed && (
+                    <View style={styles.ppMatBox} testID={`admin-pp-materiales-${pp.id}`}>
+                      <View style={styles.ppMatHead}>
+                        <Ionicons name="cube-outline" size={14} color={colors.primary} />
+                        <Text style={styles.ppMatTitle}>
+                          Suministros utilizados
+                        </Text>
+                      </View>
+                      {pp.materiales_usados && pp.materiales_usados.length > 0 ? (
+                        <View style={{ gap: 4 }}>
+                          {pp.materiales_usados.map((m: any, i: number) => (
+                            <View key={i} style={styles.ppMatRow}>
+                              <Text style={styles.ppMatSku}>{m.sku}</Text>
+                              <Text style={styles.ppMatDesc} numberOfLines={1}>
+                                {m.descripcion || "—"}
+                              </Text>
+                              <Text style={styles.ppMatQty}>×{m.cantidad}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : (
+                        <Text style={styles.ppMatNone}>
+                          ✓ No se utilizaron suministros
+                        </Text>
+                      )}
+                    </View>
+                  )}
                 </View>
               ))}
             </View>
@@ -645,6 +672,55 @@ const styles = StyleSheet.create({
   ppSerie: { color: colors.textMuted, fontSize: fontSize.xs },
   ppMeta: { color: colors.completed, fontSize: fontSize.xs, fontWeight: "600" },
   ppNotas: { color: colors.textMuted, fontSize: fontSize.xs, fontStyle: "italic" },
+  ppMatBox: {
+    marginTop: 4,
+    padding: spacing.sm,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    gap: 4,
+  },
+  ppMatHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  ppMatTitle: {
+    color: colors.primary,
+    fontWeight: "700",
+    fontSize: 11,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  ppMatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: 2,
+  },
+  ppMatSku: {
+    color: colors.accent,
+    fontFamily: "monospace" as any,
+    fontWeight: "700",
+    fontSize: fontSize.xs,
+    minWidth: 60,
+  },
+  ppMatDesc: {
+    color: colors.textMain,
+    fontSize: fontSize.xs,
+    flex: 1,
+  },
+  ppMatQty: {
+    color: colors.completed,
+    fontWeight: "800",
+    fontSize: fontSize.sm,
+  },
+  ppMatNone: {
+    color: colors.completed,
+    fontSize: fontSize.xs,
+    fontStyle: "italic",
+  },
   ppThumb: {
     width: "100%",
     height: 140,
