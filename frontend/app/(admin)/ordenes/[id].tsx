@@ -107,7 +107,7 @@ export default function OrdenDetalle() {
       const wa = r.data?.whatsapp;
       if (wa?.mode === "sent") {
         showToast("WhatsApp reenviado correctamente ✓", "success");
-      } else if (wa?.mode === "fallback_link") {
+      } else if (wa?.mode === "fallback_link" || (wa?.mode === "error" && wa?.wa_link)) {
         showToast("Mensaje preparado · Abre WhatsApp manualmente", "info");
       } else if (wa?.mode === "no_phone") {
         showToast("El técnico no tiene teléfono registrado", "error");
