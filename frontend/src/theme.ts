@@ -105,7 +105,7 @@ export const shadow = {
 };
 
 export const MVG_LOGO_URL =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/15s9o622_99899115-7203-4918-A54A-F1EFF160AC0C.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/glusuoyb_136dbcc7-95bc-463a-9c68-fd16ad42a695.png";
 
 export const statusLabels: Record<string, string> = {
   pendiente: "Pendiente",

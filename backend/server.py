@@ -402,6 +402,21 @@ async def enviar_password_whatsapp(
     return {"ok": True, "whatsapp": wa_result}
 
 
+@api_router.post("/admin/tecnicos/{tecnico_id}/impersonate")
+async def impersonate_tecnico(
+    tecnico_id: str, admin: dict = Depends(require_admin)
+):
+    """Returns a JWT token to login AS the técnico. Admin retains their own
+    session in the client; this is for previewing the técnico's app."""
+    tec = await users_col.find_one({"id": tecnico_id, "role": "tecnico"})
+    if not tec:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    token = create_access_token(
+        {"sub": tec["id"], "role": tec["role"], "impersonated_by": admin["id"]}
+    )
+    return {"access_token": token, "token_type": "bearer", "tecnico": clean_user(tec)}
+
+
 @api_router.get("/admin/tecnicos")
 async def list_tecnicos(_: dict = Depends(require_admin)):
     cursor = users_col.find(

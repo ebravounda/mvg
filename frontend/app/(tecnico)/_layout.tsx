@@ -1,13 +1,22 @@
-import { Tabs, Redirect } from "expo-router";
+import { Tabs, Redirect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View, ActivityIndicator } from "react-native";
+import {
+  View,
+  Text,
+  ActivityIndicator,
+  StyleSheet,
+  TouchableOpacity,
+  Platform,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/context/AuthContext";
-import { colors } from "@/src/theme";
+import { colors, spacing, radius, fontSize } from "@/src/theme";
+import { showToast } from "@/src/components/Toast";
 
 export default function TecnicoLayout() {
-  const { user, loading } = useAuth();
+  const { user, loading, isImpersonating, endImpersonation } = useAuth();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   if (loading) {
     return (
@@ -26,48 +35,116 @@ export default function TecnicoLayout() {
   if (!user) return <Redirect href="/login" />;
   if (user.role !== "tecnico") return <Redirect href="/(admin)/dashboard" />;
 
+  const onReturnToAdmin = async () => {
+    try {
+      await endImpersonation();
+      showToast("Sesión de admin restaurada", "success");
+      router.replace("/(admin)/dashboard" as any);
+    } catch (e: any) {
+      showToast(e?.message || "No se pudo volver al admin", "error");
+    }
+  };
+
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: {
-          backgroundColor: colors.surfaceAlt,
-          borderTopColor: colors.border,
-          height: 60 + insets.bottom,
-          paddingBottom: insets.bottom + 6,
-          paddingTop: 6,
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="ordenes"
-        options={{
-          title: "Mis órdenes",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="clipboard-outline" size={size} color={color} />
-          ),
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Impersonation banner — only visible when admin viewing as técnico */}
+      {isImpersonating && (
+        <View
+          style={[
+            bannerStyles.banner,
+            { paddingTop: insets.top + 10 },
+          ]}
+          testID="impersonation-banner"
+        >
+          <Ionicons name="eye-outline" size={16} color="#fff" />
+          <Text style={bannerStyles.text} numberOfLines={2}>
+            Estás viendo la app como{" "}
+            <Text style={{ fontWeight: "800" }}>
+              {user.nombre} {user.apellidos}
+            </Text>
+          </Text>
+          <TouchableOpacity
+            onPress={onReturnToAdmin}
+            style={bannerStyles.btn}
+            activeOpacity={0.8}
+            testID="impersonation-return-btn"
+          >
+            <Ionicons name="arrow-back" size={12} color="#fff" />
+            <Text style={bannerStyles.btnText}>Volver a admin</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: colors.primary,
+          tabBarInactiveTintColor: colors.textMuted,
+          tabBarStyle: {
+            backgroundColor: colors.surfaceAlt,
+            borderTopColor: colors.border,
+            height: 60 + insets.bottom,
+            paddingBottom: insets.bottom + 6,
+            paddingTop: 6,
+          },
         }}
-      />
-      <Tabs.Screen
-        name="suministros"
-        options={{
-          title: "Suministros",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="cube-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="perfil"
-        options={{
-          title: "Perfil",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
-          ),
-        }}
-      />
-    </Tabs>
+      >
+        <Tabs.Screen
+          name="ordenes"
+          options={{
+            title: "Mis órdenes",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="clipboard-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="suministros"
+          options={{
+            title: "Suministros",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="cube-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="perfil"
+          options={{
+            title: "Perfil",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="person-outline" size={size} color={color} />
+            ),
+          }}
+        />
+      </Tabs>
+    </View>
   );
 }
+
+const bannerStyles = StyleSheet.create({
+  banner: {
+    backgroundColor: colors.accent,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingBottom: 10,
+    ...Platform.select({
+      web: {
+        // Sticky on web preview top
+        position: "relative" as any,
+      },
+    }),
+  },
+  text: { color: "#fff", fontSize: fontSize.xs, flex: 1 },
+  btn: {
+    backgroundColor: "rgba(0,0,0,0.25)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+  },
+  btnText: { color: "#fff", fontWeight: "700", fontSize: fontSize.xs },
+});

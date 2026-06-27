@@ -268,26 +268,26 @@ export default function SuministrosScreen() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StickyHeader title="Suministros" subtitle="Solicitudes, catálogo, bodegas y stock" />
 
-      {/* Tab bar */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabsScroll}
-        contentContainerStyle={[styles.tabsRow, isDesktop && { paddingHorizontal: 32 }]}
-      >
-        {TABS.map((t) => {
-          const active = tab === t.id;
-          return (
-            <TouchableOpacity
-              key={t.id}
-              testID={`tab-${t.id}`}
-              onPress={() => setTab(t.id)}
-              style={[styles.tab, active && styles.tabActive]}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={t.icon}
-                size={16}
+      {/* Tab bar - wrapped in fixed-height View so horizontal ScrollView doesn't collapse */}
+      <View style={styles.tabsWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={[styles.tabsRow, isDesktop && { paddingHorizontal: 32 }]}
+        >
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <TouchableOpacity
+                key={t.id}
+                testID={`tab-${t.id}`}
+                onPress={() => setTab(t.id)}
+                style={[styles.tab, active && styles.tabActive]}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={t.icon}
+                  size={16}
                 color={active ? colors.primary : colors.textMuted}
               />
               <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
@@ -301,7 +301,8 @@ export default function SuministrosScreen() {
             </TouchableOpacity>
           );
         })}
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
@@ -821,8 +822,13 @@ const EmptyState: React.FC<{ icon: any; text: string }> = ({ icon, text }) => (
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  tabsScroll: { flexGrow: 0, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
-  tabsRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.xs },
+  tabsWrap: {
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    height: 56,
+  },
+  tabsRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.xs, alignItems: "center" },
   tab: {
     flexDirection: "row",
     alignItems: "center",
@@ -844,7 +850,7 @@ const styles = StyleSheet.create({
   },
   tabBadgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
 
-  content: { padding: spacing.lg, paddingBottom: 80, gap: spacing.md },
+  content: { padding: spacing.lg, paddingBottom: 140, gap: spacing.md },
   sectionHead: {
     flexDirection: "row",
     justifyContent: "space-between",

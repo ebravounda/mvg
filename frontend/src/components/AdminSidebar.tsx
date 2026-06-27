@@ -31,10 +31,6 @@ export const AdminSidebar: React.FC = () => {
         <View style={styles.brandLogoWrap}>
           <Image source={{ uri: MVG_LOGO_URL }} style={styles.brandLogo} resizeMode="contain" />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.brandTitle}>MVG</Text>
-          <Text style={styles.brandSub}>Computación</Text>
-        </View>
       </View>
 
       <View style={styles.divider} />
@@ -111,19 +107,21 @@ const styles = StyleSheet.create({
   brand: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: spacing.md,
     paddingHorizontal: spacing.sm,
     paddingBottom: spacing.lg,
   },
   brandLogoWrap: {
-    width: 40,
-    height: 40,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    width: 140,
+    height: 80,
+    backgroundColor: "#fff",
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
+    padding: 6,
   },
-  brandLogo: { width: 32, height: 22 },
+  brandLogo: { width: 128, height: 70 },
   brandTitle: {
     color: colors.sidebarTextActive,
     fontSize: fontSize.lg,

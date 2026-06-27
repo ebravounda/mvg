@@ -176,10 +176,6 @@ export default function LoginScreen() {
                 style={styles.brandLogo}
                 resizeMode="contain"
               />
-              <View>
-                <Text style={styles.brandName}>MVG</Text>
-                <Text style={styles.brandSub}>Computación</Text>
-              </View>
             </View>
 
             <View style={styles.brandHero}>
@@ -281,7 +277,13 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginBottom: 56,
   },
-  brandLogo: { width: 48, height: 36 },
+  brandLogo: {
+    width: 180,
+    height: 180,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 6,
+  },
   brandName: {
     color: "#fff",
     fontWeight: "800",
@@ -370,7 +372,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
   },
   mobileBrand: { alignItems: "center", marginBottom: spacing.xl },
-  mobileLogo: { width: 200, height: 100 },
+  mobileLogo: { width: 160, height: 160 },
 
   // ---- CARD ----
   card: {

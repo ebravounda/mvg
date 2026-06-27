@@ -9,16 +9,19 @@ import {
   RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { StickyHeader } from "@/src/components/StickyHeader";
 import { FormSheet } from "@/src/components/FormSheet";
 import { Field, Btn } from "@/src/components/Form";
 import { showToast } from "@/src/components/Toast";
+import { useAuth } from "@/src/context/AuthContext";
 import { colors, spacing, radius, fontSize } from "@/src/theme";
 
 export default function TecnicosList() {
+  const router = useRouter();
+  const { impersonateTecnico } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [bodegas, setBodegas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,6 +111,22 @@ export default function TecnicosList() {
       await api.delete(`/admin/tecnicos/${tid}`);
       showToast("Técnico eliminado", "success");
       load();
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    }
+  };
+
+  const onImpersonate = async (t: any) => {
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        `¿Iniciar sesión como ${t.nombre} ${t.apellidos}?\n\nVerás la app tal como la ve este técnico. Podrás volver a tu sesión de admin con el botón "Volver a admin" en el banner superior.`
+      );
+      if (!ok) return;
+    }
+    try {
+      await impersonateTecnico(t.id);
+      showToast(`Sesión cambiada a ${t.nombre}`, "success");
+      router.replace("/(tecnico)/ordenes" as any);
     } catch (e: any) {
       showToast(e?.response?.data?.detail || "Error", "error");
     }
@@ -284,6 +303,13 @@ export default function TecnicosList() {
                 </View>
               </View>
               <View style={{ flexDirection: "row", gap: 6 }}>
+                <TouchableOpacity
+                  testID={`impersonate-${t.id}`}
+                  onPress={() => onImpersonate(t)}
+                  style={styles.impBtn}
+                >
+                  <Ionicons name="log-in-outline" size={18} color={colors.accent} />
+                </TouchableOpacity>
                 <TouchableOpacity
                   testID={`editar-tecnico-${t.id}`}
                   onPress={() => openEdit(t)}
@@ -636,6 +662,14 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: radius.md,
     backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  impBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentSoft,
     alignItems: "center",
     justifyContent: "center",
   },
