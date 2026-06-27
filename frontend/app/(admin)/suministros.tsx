@@ -20,7 +20,7 @@ import { Field, Btn } from "@/src/components/Form";
 import { useResponsive } from "@/src/hooks/useResponsive";
 import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 
-type Tab = "solicitudes" | "config" | "catalogo" | "bodegas" | "inventario";
+type Tab = "solicitudes" | "config" | "catalogo" | "bodegas" | "stock";
 
 export default function SuministrosScreen() {
   const { isDesktop } = useResponsive();
@@ -258,7 +258,7 @@ export default function SuministrosScreen() {
 
   const TABS: { id: Tab; label: string; icon: any; badge?: number }[] = [
     { id: "solicitudes", label: "Solicitudes", icon: "list-outline", badge: pendientes },
-    { id: "inventario", label: "Stock por técnico", icon: "cube-outline" },
+    { id: "stock", label: "Stock por técnico", icon: "cube-outline" },
     { id: "catalogo", label: "Catálogo", icon: "pricetag-outline" },
     { id: "bodegas", label: "Bodegas", icon: "storefront-outline" },
     { id: "config", label: "Configuración", icon: "settings-outline" },
@@ -406,7 +406,7 @@ export default function SuministrosScreen() {
           )}
 
           {/* ============ INVENTARIO ============ */}
-          {tab === "inventario" && (
+          {tab === "stock" && (
             <View style={{ gap: spacing.md }}>
               <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>Stock por técnico</Text>
