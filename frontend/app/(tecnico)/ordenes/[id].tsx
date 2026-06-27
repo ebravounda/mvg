@@ -85,7 +85,7 @@ export default function TecnicoOrdenDetalle() {
     }
   };
 
-  const openPpEvidence = (pp: any) => {
+  const openPpEvidence = async (pp: any) => {
     setSelectedPp(pp);
     setFoto(null);
     setNotas("");
@@ -94,6 +94,12 @@ export default function TecnicoOrdenDetalle() {
     setSheetError(null);
     setSheetInfo(null);
     setEvidenceOpen(true);
+    // Always refresh stock so the technician sees the up-to-date quantity
+    // after each consumption.
+    try {
+      const s = await api.get("/tecnico/inventario");
+      setStock(s.data);
+    } catch {}
   };
 
   const addMaterial = (s: any) => {

@@ -34,7 +34,7 @@ def _fmt_dt(iso: str) -> str:
         return iso
 
 
-def _b64_to_image(b64: str, max_w_cm: float = 14):
+def _b64_to_image(b64: str, max_w_cm: float = 7.5):
     if not b64:
         return None
     try:
@@ -44,6 +44,11 @@ def _b64_to_image(b64: str, max_w_cm: float = 14):
         ratio = img.imageHeight / max(img.imageWidth, 1)
         img.drawWidth = max_w_cm * cm
         img.drawHeight = max_w_cm * cm * ratio
+        # Constrain very tall photos
+        max_h = 10 * cm
+        if img.drawHeight > max_h:
+            img.drawHeight = max_h
+            img.drawWidth = max_h / max(ratio, 0.01)
         return img
     except Exception:
         return None
@@ -232,22 +237,89 @@ def build_orden_pdf(orden: dict, cliente: dict, sucursal: dict, tecnico: dict) -
             pin_pads = [legacy]
 
     for idx, pp in enumerate(pin_pads, start=1):
-        head = (
-            f"<b>Pin Pad #{idx}</b> · Serie: <b>{pp.get('serie') or '—'}</b> · "
-            f"DDLL: <b>{pp.get('ddll') or '—'}</b> · Modelo: {pp.get('modelo') or '—'}"
+        # Card header for each pin pad
+        head_html = (
+            f"<para><b><font color='#2563EB'>Pin Pad #{idx}</font></b> &nbsp;·&nbsp; "
+            f"Serie: <b>{pp.get('serie') or '—'}</b> &nbsp;·&nbsp; "
+            f"DDLL: <b>{pp.get('ddll') or '—'}</b> &nbsp;·&nbsp; "
+            f"Modelo: {pp.get('modelo') or '—'}</para>"
         )
-        elements.append(Spacer(1, 6))
-        elements.append(Paragraph(head, NORMAL))
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph(head_html, NORMAL))
         status_txt = "✓ Actualizado" if pp.get("completed") else "Pendiente"
         if pp.get("completed_at"):
             status_txt += f" · {_fmt_dt(pp.get('completed_at'))}"
         elements.append(Paragraph(status_txt, MUTED_STYLE))
+
+        # Materiales utilizados
+        mats = pp.get("materiales_usados") or []
+        if pp.get("completed"):
+            if mats:
+                rows = [["SKU", "Descripción", "Cant."]]
+                for m in mats:
+                    rows.append(
+                        [
+                            m.get("sku") or "—",
+                            (m.get("descripcion") or "—")[:55],
+                            str(m.get("cantidad") or 0),
+                        ]
+                    )
+                mt = Table(rows, colWidths=[3 * cm, 11 * cm, 2 * cm])
+                mt.setStyle(
+                    TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, 0), rcolors.HexColor("#E0F2FE")),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                            ("BOX", (0, 0), (-1, -1), 0.4, rcolors.HexColor("#94A3B8")),
+                            ("INNERGRID", (0, 0), (-1, -1), 0.3, rcolors.HexColor("#CBD5E1")),
+                            ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                            ("TOPPADDING", (0, 0), (-1, -1), 3),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                        ]
+                    )
+                )
+                elements.append(Spacer(1, 3))
+                elements.append(
+                    Paragraph(
+                        "<b><font color='#2563EB' size=8>SUMINISTROS UTILIZADOS</font></b>",
+                        NORMAL,
+                    )
+                )
+                elements.append(mt)
+            else:
+                elements.append(
+                    Paragraph(
+                        "<font color='#16A34A' size=9><b>✓ No se utilizaron suministros</b></font>",
+                        NORMAL,
+                    )
+                )
+
         if pp.get("notas"):
-            elements.append(Paragraph(f"Notas: {pp.get('notas')}", MUTED_STYLE))
-        img = _b64_to_image(pp.get("evidencia_base64"))
+            elements.append(Paragraph(f"<i>Notas: {pp.get('notas')}</i>", MUTED_STYLE))
+
+        img = _b64_to_image(pp.get("evidencia_base64"), max_w_cm=10)
         if img:
             elements.append(Spacer(1, 4))
-            elements.append(img)
+            # Center the photo with a thin border via a 1-cell table
+            phot = Table([[img]], colWidths=[10.5 * cm])
+            phot.setStyle(
+                TableStyle(
+                    [
+                        ("BOX", (0, 0), (-1, -1), 0.5, rcolors.HexColor("#CBD5E1")),
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ]
+                )
+            )
+            elements.append(phot)
 
     # Footer
     elements.append(Spacer(1, 18))
