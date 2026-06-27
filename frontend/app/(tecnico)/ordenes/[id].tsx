@@ -115,6 +115,47 @@ export default function TecnicoOrdenDetalle() {
     setMaterialesUsados((prev) => prev.filter((m) => m.sku !== sku));
   };
 
+  // 30-min edit window helpers
+  const EDIT_WINDOW_MIN = 30;
+  const isWithinEditWindow = (uploadedIso: string): boolean => {
+    try {
+      const u = new Date(uploadedIso).getTime();
+      return Date.now() - u < EDIT_WINDOW_MIN * 60 * 1000;
+    } catch {
+      return false;
+    }
+  };
+  const formatEditDeadline = (uploadedIso: string): string => {
+    try {
+      const u = new Date(uploadedIso).getTime();
+      const deadline = new Date(u + EDIT_WINDOW_MIN * 60 * 1000);
+      return deadline.toLocaleTimeString("es-CL", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return "—";
+    }
+  };
+
+  const onDeletePhoto = async (pp: any) => {
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        "¿Eliminar esta foto? Podrás volver a tomarla. Solo dispones de 30 min desde la subida."
+      );
+      if (!ok) return;
+    }
+    try {
+      const r = await api.delete(
+        `/tecnico/ordenes/${id}/pinpad/${pp.id}/foto`
+      );
+      setOrden(r.data);
+      showToast("Foto eliminada", "success");
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    }
+  };
+
   const ensurePerm = async (
     fn: () => Promise<ImagePicker.PermissionResponse>,
     name: string
@@ -180,9 +221,37 @@ export default function TecnicoOrdenDetalle() {
     }
     setActionLoading(true);
     try {
+      // Detect if this confirmation will close the order (last incomplete pp)
+      const remainingAfter =
+        (orden?.pin_pads || []).filter(
+          (p: any) => !p.completed && p.id !== selectedPp.id
+        ).length;
+      const willClose = remainingAfter === 0;
+
+      const payload: any = { evidencia_base64: foto, notas };
+      if (willClose) {
+        try {
+          showToast("Solicitando ubicación...", "info");
+          const { captureLocation } = await import("@/src/utils/geolocation");
+          const loc = await captureLocation();
+          payload.lat = loc.lat;
+          payload.lng = loc.lng;
+          payload.accuracy_m = loc.accuracy;
+          payload.address = loc.address;
+        } catch (geoErr: any) {
+          setActionLoading(false);
+          showToast(
+            geoErr?.message ||
+              "Ubicación obligatoria para cerrar la orden. Autoriza la ubicación.",
+            "error"
+          );
+          return;
+        }
+      }
+
       const r = await api.patch(
         `/tecnico/ordenes/${id}/pinpad/${selectedPp.id}`,
-        { evidencia_base64: foto, notas }
+        payload
       );
       setOrden(r.data);
 
@@ -397,6 +466,27 @@ export default function TecnicoOrdenDetalle() {
               </Text>
             ) : null}
 
+            {/* Photo edit/delete window (30 min) */}
+            {pp.completed &&
+              pp.uploaded_at &&
+              orden.estado !== "finalizada" &&
+              isWithinEditWindow(pp.uploaded_at) && (
+                <View style={styles.editRow} testID={`pp-edit-${pp.id}`}>
+                  <Ionicons name="time-outline" size={13} color={colors.pending} />
+                  <Text style={styles.editText}>
+                    Puedes editar hasta:{" "}
+                    {formatEditDeadline(pp.uploaded_at)}
+                  </Text>
+                  <TouchableOpacity
+                    testID={`pp-delete-${pp.id}`}
+                    onPress={() => onDeletePhoto(pp)}
+                    style={styles.editBtnIcon}
+                  >
+                    <Ionicons name="trash-outline" size={14} color={colors.danger} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
             {orden.estado !== "finalizada" && (
               <TouchableOpacity
                 testID={`pp-evidencia-${pp.id}`}
@@ -417,7 +507,7 @@ export default function TecnicoOrdenDetalle() {
                     pp.completed && { color: colors.textMuted },
                   ]}
                 >
-                  {pp.completed ? "Volver a tomar foto" : "Tomar foto"}
+                  {pp.completed ? "Reemplazar foto" : "Tomar foto"}
                 </Text>
               </TouchableOpacity>
             )}
@@ -929,4 +1019,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   matStockBadgeText: { color: colors.completed, fontWeight: "800", fontSize: fontSize.xs },
+  editRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.sm,
+    backgroundColor: `${colors.pending}1a`,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.pending,
+    marginTop: 4,
+  },
+  editText: {
+    color: colors.pending,
+    fontSize: fontSize.xs,
+    fontWeight: "600",
+    flex: 1,
+  },
+  editBtnIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.sm,
+    backgroundColor: `${colors.danger}11`,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

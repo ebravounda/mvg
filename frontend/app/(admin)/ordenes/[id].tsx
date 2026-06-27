@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { StickyHeader } from "@/src/components/StickyHeader";
+import { LocationMap } from "@/src/components/LocationMap";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
 import { DeadlineBadge } from "@/src/components/DeadlineBadge";
 import { Btn, Select } from "@/src/components/Form";
@@ -416,6 +417,34 @@ export default function OrdenDetalle() {
               <View style={styles.notesBox}>
                 <Text style={styles.notesLabel}>Notas del técnico</Text>
                 <Text style={styles.notes}>{orden.notas_tecnico}</Text>
+              </View>
+            ) : null}
+
+            {orden.closed_lat && orden.closed_lng ? (
+              <View style={{ marginTop: spacing.md }}>
+                <Text style={styles.notesLabel}>📍 Ubicación de cierre</Text>
+                {orden.finalized_at && (
+                  <Text style={styles.muted}>
+                    Cerrada el{" "}
+                    {new Date(orden.finalized_at).toLocaleString("es-CL", {
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </Text>
+                )}
+                <View style={{ marginTop: spacing.sm }}>
+                  <LocationMap
+                    lat={orden.closed_lat}
+                    lng={orden.closed_lng}
+                    address={orden.closed_address}
+                    accuracy={orden.closed_accuracy_m}
+                    height={360}
+                    testID="orden-close-map"
+                  />
+                </View>
               </View>
             ) : null}
           </Section>

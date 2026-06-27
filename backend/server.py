@@ -201,10 +201,27 @@ class OrdenAsignar(BaseModel):
 class OrdenFinalizar(BaseModel):
     evidencia_base64: str  # base64 image data
     notas: Optional[str] = None
+    # Location is required - técnico must authorize browser geolocation
+    lat: float
+    lng: float
+    address: Optional[str] = None
+    accuracy_m: Optional[float] = None
 
 
 class PinPadUpdate(BaseModel):
     evidencia_base64: str
+    notas: Optional[str] = None
+    # Optional location (captured on every photo upload, mandatory only when
+    # closing the order). If provided AND this completes the order it will
+    # also act as the closing location.
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    address: Optional[str] = None
+    accuracy_m: Optional[float] = None
+
+
+class PinPadEditPhoto(BaseModel):
+    evidencia_base64: str  # new photo
     notas: Optional[str] = None
 
 
@@ -1267,6 +1284,12 @@ async def update_pinpad(
             pp["evidencia_base64"] = payload.evidencia_base64
             pp["notas"] = payload.notas
             pp["completed_at"] = now_iso()
+            pp["uploaded_at"] = now_iso()  # for 30-min edit window
+            if payload.lat is not None and payload.lng is not None:
+                pp["lat"] = payload.lat
+                pp["lng"] = payload.lng
+                pp["address"] = payload.address
+                pp["accuracy_m"] = payload.accuracy_m
             found = True
         if not pp.get("completed"):
             all_done = False
@@ -1278,10 +1301,22 @@ async def update_pinpad(
     if o.get("estado") == "pendiente":
         set_data["estado"] = "en_progreso"
         set_data["started_at"] = now_iso()
-    # auto-finalize if all done
+    # auto-finalize if all done — REQUIRES location to close
     if all_done:
+        if payload.lat is None or payload.lng is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Ubicación requerida para finalizar la orden. "
+                    "Autoriza la geolocalización en tu navegador."
+                ),
+            )
         set_data["estado"] = "finalizada"
         set_data["finalized_at"] = now_iso()
+        set_data["closed_lat"] = payload.lat
+        set_data["closed_lng"] = payload.lng
+        set_data["closed_address"] = payload.address
+        set_data["closed_accuracy_m"] = payload.accuracy_m
 
     await ordenes_col.update_one({"id": orden_id}, {"$set": set_data})
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
@@ -1309,9 +1344,115 @@ async def finalizar_orden(
                 "evidencia_base64": payload.evidencia_base64,
                 "notas_tecnico": payload.notas,
                 "finalized_at": now_iso(),
+                "closed_lat": payload.lat,
+                "closed_lng": payload.lng,
+                "closed_address": payload.address,
+                "closed_accuracy_m": payload.accuracy_m,
             }
         },
     )
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+# ----- Pin pad photo editing within 30-min window -----
+EDIT_WINDOW_MIN = 30
+
+
+def _can_edit(pp: dict) -> bool:
+    ts = pp.get("uploaded_at") or pp.get("completed_at")
+    if not ts:
+        return False
+    try:
+        uploaded = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    delta = datetime.now(timezone.utc) - uploaded
+    return delta < timedelta(minutes=EDIT_WINDOW_MIN)
+
+
+@api_router.patch("/tecnico/ordenes/{orden_id}/pinpad/{pinpad_id}/foto")
+async def replace_pinpad_photo(
+    orden_id: str,
+    pinpad_id: str,
+    payload: PinPadEditPhoto,
+    tec: dict = Depends(require_tecnico),
+):
+    """Replace the photo of a completed pin pad within EDIT_WINDOW_MIN minutes."""
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    pin_pads = o.get("pin_pads") or []
+    target = next((p for p in pin_pads if p.get("id") == pinpad_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Pin pad no encontrado")
+    if not target.get("completed"):
+        raise HTTPException(
+            status_code=400, detail="Esta pin pad aún no tiene foto cargada"
+        )
+    if not _can_edit(target):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"La ventana de edición de {EDIT_WINDOW_MIN} minutos ya expiró. "
+                "Contacta al admin para correcciones."
+            ),
+        )
+    target["evidencia_base64"] = payload.evidencia_base64
+    if payload.notas is not None:
+        target["notas"] = payload.notas
+    target["edited_at"] = now_iso()
+    await ordenes_col.update_one({"id": orden_id}, {"$set": {"pin_pads": pin_pads}})
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+@api_router.delete("/tecnico/ordenes/{orden_id}/pinpad/{pinpad_id}/foto")
+async def delete_pinpad_photo(
+    orden_id: str,
+    pinpad_id: str,
+    tec: dict = Depends(require_tecnico),
+):
+    """Delete the photo (and reset completion) of a pin pad within window."""
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    if o.get("estado") == "finalizada":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La orden ya fue finalizada. No se pueden eliminar fotos "
+                "después del cierre."
+            ),
+        )
+    pin_pads = o.get("pin_pads") or []
+    target = next((p for p in pin_pads if p.get("id") == pinpad_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Pin pad no encontrado")
+    if not target.get("completed"):
+        raise HTTPException(
+            status_code=400, detail="Esta pin pad aún no tiene foto cargada"
+        )
+    if not _can_edit(target):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"La ventana de edición de {EDIT_WINDOW_MIN} minutos ya expiró."
+            ),
+        )
+    target["completed"] = False
+    target["evidencia_base64"] = None
+    target["notas"] = None
+    target["completed_at"] = None
+    target["uploaded_at"] = None
+    target["lat"] = None
+    target["lng"] = None
+    target["address"] = None
+    await ordenes_col.update_one({"id": orden_id}, {"$set": {"pin_pads": pin_pads}})
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
     return await enrich_orden(o)
 

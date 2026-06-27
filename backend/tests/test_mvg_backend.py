@@ -290,19 +290,34 @@ class TestTecnicoFlow:
         assert ri.status_code == 200
         assert ri.json()["estado"] == "en_progreso"
 
+        # Finalizar without lat/lng -> 422 (iter7: OrdenFinalizar requires lat/lng)
+        rf_no_geo = requests.patch(
+            f"{base_url}/api/tecnico/ordenes/{orden['id']}/finalizar",
+            json={"evidencia_base64": SAMPLE_IMG_B64, "notas": "sin geo"},
+            headers=tecnico_headers,
+            timeout=30,
+        )
+        assert rf_no_geo.status_code == 422
+
         # Finalizar without evidencia -> 400 (pydantic requires field; send empty string)
         rf_bad = requests.patch(
             f"{base_url}/api/tecnico/ordenes/{orden['id']}/finalizar",
-            json={"evidencia_base64": "", "notas": "sin foto"},
+            json={"evidencia_base64": "", "notas": "sin foto", "lat": 1.0, "lng": 2.0},
             headers=tecnico_headers,
             timeout=30,
         )
         assert rf_bad.status_code == 400
 
-        # Finalizar with evidencia -> 200
+        # Finalizar with evidencia + geo -> 200
         rf = requests.patch(
             f"{base_url}/api/tecnico/ordenes/{orden['id']}/finalizar",
-            json={"evidencia_base64": SAMPLE_IMG_B64, "notas": "ok"},
+            json={
+                "evidencia_base64": SAMPLE_IMG_B64,
+                "notas": "ok",
+                "lat": 40.4168,
+                "lng": -3.7038,
+                "address": "Test",
+            },
             headers=tecnico_headers,
             timeout=30,
         )
