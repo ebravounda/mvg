@@ -28,7 +28,38 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    // surface friendly errors
+    // Normalize Pydantic 422 validation errors (array of objects) into a single
+    // human-readable string so showToast(detail) doesn't crash with
+    // "Objects are not valid as a React child".
+    const detail = err?.response?.data?.detail;
+    if (Array.isArray(detail)) {
+      err.response.data.detail = detail
+        .map((d: any) => {
+          if (typeof d === "string") return d;
+          if (d?.msg) {
+            const loc = Array.isArray(d.loc)
+              ? d.loc.filter((p: any) => p !== "body").join(".")
+              : "";
+            return loc ? `${loc}: ${d.msg}` : d.msg;
+          }
+          try {
+            return JSON.stringify(d);
+          } catch {
+            return String(d);
+          }
+        })
+        .join(" · ");
+    } else if (detail && typeof detail === "object") {
+      err.response.data.detail =
+        detail.msg ||
+        (() => {
+          try {
+            return JSON.stringify(detail);
+          } catch {
+            return "Error";
+          }
+        })();
+    }
     return Promise.reject(err);
   }
 );
