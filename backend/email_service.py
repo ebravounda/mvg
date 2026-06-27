@@ -185,3 +185,101 @@ PRODUCTOS SOLICITADOS ({len(items)}):
         text += f"\nNOTAS: {notas}\n"
 
     return html, text
+
+
+def build_welcome_email(
+    tecnico_nombre: str,
+    tecnico_email: str,
+    plain_password: str,
+    bodega: str = "",
+    region: str = "",
+) -> tuple[str, str]:
+    """Welcome email sent to a freshly created tecnico user.
+
+    Returns (html, text). The password is shown ONCE so the technician can change
+    it after first login.
+    """
+    bodega_line = ""
+    if region or bodega:
+        bodega_line = f"<p style='color:#64748b;font-size:13px;margin:0 0 16px 0;'>Bodega asignada: <strong style='color:#0f172a;'>{bodega or '—'}</strong>{(' · ' + region) if region else ''}</p>"
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f5f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f7fb;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;box-shadow:0 4px 12px rgba(15,23,42,0.06);">
+        <tr><td style="background:#0f172a;padding:28px 32px;text-align:center;">
+          <h1 style="color:#fff;font-size:22px;margin:0 0 4px 0;font-weight:800;letter-spacing:0.3px;">¡Bienvenido a MVG Computación!</h1>
+          <p style="color:#94a3b8;font-size:13px;margin:0;">Plataforma de gestión de órdenes de servicio</p>
+        </td></tr>
+        <tr><td style="padding:32px;">
+          <h2 style="color:#0f172a;font-size:18px;margin:0 0 16px 0;">Hola, {tecnico_nombre} 👋</h2>
+          <p style="color:#475569;font-size:14px;line-height:22px;margin:0 0 16px 0;">
+            Se ha creado tu usuario para gestionar las órdenes de servicios de MVG.
+            <strong style='color:#0f172a;'>Mantén tus datos seguros</strong> y revisa varias veces
+            al día la plataforma para mantener tus órdenes actualizadas.
+          </p>
+          {bodega_line}
+
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 22px 0;border-collapse:collapse;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+            <tr>
+              <td style="padding:14px 18px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:0.5px;width:36%;text-transform:uppercase;">EMAIL</td>
+              <td style="padding:14px 18px;color:#0f172a;font-size:14px;font-family:monospace;">{tecnico_email}</td>
+            </tr>
+            <tr>
+              <td style="padding:14px 18px;color:#64748b;font-size:12px;font-weight:700;letter-spacing:0.5px;border-top:1px solid #e2e8f0;text-transform:uppercase;">CONTRASEÑA INICIAL</td>
+              <td style="padding:14px 18px;color:#0f172a;font-size:15px;font-family:monospace;border-top:1px solid #e2e8f0;font-weight:700;">{plain_password}</td>
+            </tr>
+          </table>
+
+          <div style="margin:0 0 22px 0;padding:14px 18px;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;">
+            <p style="color:#92400e;font-size:13px;margin:0;line-height:20px;">
+              🔒 <strong>Por seguridad, cambia esta contraseña en cuanto ingreses por primera vez.</strong>
+            </p>
+          </div>
+
+          <h3 style="color:#0f172a;font-size:14px;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;">¿Qué puedes hacer?</h3>
+          <ul style="color:#475569;font-size:13px;line-height:22px;margin:0 0 18px 18px;padding:0;">
+            <li>Revisar tus órdenes asignadas</li>
+            <li>Iniciar trabajos y subir evidencias fotográficas</li>
+            <li>Registrar materiales utilizados (se descuentan automáticamente de tu stock)</li>
+            <li>Solicitar suministros directamente desde la app</li>
+            <li>Ver el historial de tus solicitudes y stock disponible</li>
+          </ul>
+        </td></tr>
+        <tr><td style="padding:18px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;">
+          <p style="color:#94a3b8;font-size:11px;margin:0;">Este es un mensaje automático de MVG Computación. No respondas a este correo.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+    text = f"""¡Bienvenido a MVG Computación!
+================================
+
+Hola {tecnico_nombre},
+
+Se ha creado tu usuario para gestionar las órdenes de servicios de MVG.
+Mantén tus datos seguros y revisa varias veces al día la plataforma para
+mantener tus órdenes actualizadas.
+
+Bodega asignada: {bodega or '—'} {('· ' + region) if region else ''}
+
+Credenciales de acceso:
+  Email: {tecnico_email}
+  Contraseña inicial: {plain_password}
+
+🔒 Por seguridad, cambia esta contraseña en cuanto ingreses por primera vez.
+
+¿Qué puedes hacer?
+  • Revisar tus órdenes asignadas
+  • Iniciar trabajos y subir evidencias fotográficas
+  • Registrar materiales utilizados (se descuentan de tu stock)
+  • Solicitar suministros directamente desde la app
+  • Ver tu historial de solicitudes y stock disponible
+
+— MVG Computación
+"""
+    return html, text

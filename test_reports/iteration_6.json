@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 6 testing: 3 new admin-técnicos features (welcome email on creation, send-password-via-WhatsApp endpoint, edit-técnico admin modal). BACKEND 10/10 NEW iter6 pytest passing (test_tecnicos_iter6.py): welcome_email field returned with mode in {sent,error,disabled} (mode='sent' to ed0.2580@gmail.com confirmed via backend log id=343466b2-...; mode='error 403' for other recipients — that's expected Resend testing-mode behaviour and user creation still succeeds with 201). POST /admin/tecnicos/{id}/enviar-password-whatsapp returns 200+{ok,whatsapp} with real password rotation verified (old=401, new=200), 404 invalid id, 422 password<6, 400 sin teléfono. Auth: 401 sin token, 403 con técnico token — both endpoints. Regression: 41/41 iter1-5 tests in the relevant suites still passing (test_mvg_iter2 had 6 PRE-EXISTING failures from mitiendapro returning 500 for fake +56912345678 phones — not caused by iter6). FRONTEND (1440x900 desktop): admin login + navigate to /tecnicos works. List shows 17 técnicos. Every card has BOTH new testIDs editar-tecnico-{id} (blue pencil) and the existing eliminar-tecnico-{id} (red trash). Clicking the pencil opens the modal tecnico-edit-sheet with title 'Editar: {Nombre Apellido}' and all expected fields present: edit-nombre, edit-apellidos, edit-email, edit-telefono, edit-bodega-empty + per-bodega chips, edit-password, enviar-pwd-whatsapp-btn, edit-submit. Fields are pre-filled with the técnico's current data. ⚠️ CRITICAL FRONTEND BUG FOUND: when the email is edited to an invalid format (e.g. ending in .test which Pydantic EmailStr rejects), the backend correctly returns 422 with detail=[{type,loc,msg,input,ctx},...]. The frontend then crashes with 'Uncaught Error: Objects are not valid as a React child (found: object with keys {type,loc,msg,input,ctx})' because showToast(e?.response?.data?.detail || 'Error', 'error') tries to render the array of validation-error objects directly. This same defensive-code pattern is used in ~10 other admin screens (suministros.tsx, ordenes/index.tsx, …) so it's a pre-existing risk that the new edit-email field newly exposes. The successful happy-path (edit + save with a valid email) was not verifiable in this run because the React error overlay blocked further interaction after the 422; backend PATCH endpoint itself is unchanged and works (verified by previous iterations).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "tecnicos.tsx onEditSave (and the same pattern in ~10 other admin screens)",
+        "issue": "Uncaught React error when backend returns HTTP 422 with detail=[{type,loc,msg,input,ctx}…]. The catch-block does `showToast(e?.response?.data?.detail || 'Error', 'error')` which forwards an array of objects to <Text>{detail}</Text> in Toast.tsx → React crash 'Objects are not valid as a React child'. Reproduces by opening the edit modal, changing email to anything ending in .test or otherwise rejected by Pydantic EmailStr, and tapping 'Guardar cambios'. Fix: extract a stringifier such as `const msg = Array.isArray(detail) ? detail.map(d => d.msg).join(' · ') : (detail || 'Error');` and apply it in every showToast(e?.response?.data?.detail …) site, or do it once inside showToast/api-client interceptor.",
+        "testID": "edit-submit / tecnico-edit-sheet",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Admin → Edit técnico → save invalid email",
+        "issue": "422 from backend triggers React render crash (see ui_bugs entry above). Affects every other admin form too (clientes, ordenes, suministros, etc.) — newly user-reachable in iter6 via the edit-email field which previously didn't exist on this screen.",
+        "affected_testIDs": ["edit-submit", "edit-email"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tecnicos_iter6.py",
+    "/app/test_reports/pytest/pytest_iter6.xml"
+  ],
+  "action_items": [
+    "HIGH: Make showToast (or the axios response-error interceptor in /app/frontend/src/api/client.ts) robust against FastAPI 422 detail arrays. Recommended one-line fix in api client: `error.response.data.detail = Array.isArray(d) ? d.map(x => x.msg || JSON.stringify(x)).join(' · ') : d;` before rejecting the promise.",
+    "MEDIUM (pre-existing, not caused by iter6): test_mvg_iter2.py has 6 stale failures because mitiendapro returns 500 for fake +56912345678 phones, but tests assert mode=='fallback_link'. Either update those tests to accept mode in {'fallback_link','error'} or update whatsapp_service to map 500→fallback_link.",
+    "LOW (pre-existing): RN-web deprecation warnings (shadow*, props.pointerEvents) still emitted from FormSheet and other shared components — non-blocking.",
+    "INFO: Pydantic EmailStr in TecnicoUpdate rejects some TLDs the user may want (e.g. .test, .local). If admins legitimately need them, switch to plain `Optional[str]` with a custom regex; otherwise document the restriction in the UI."
+  ],
+  "critical_code_review_comments": [
+    "tecnicos.tsx is now 669 lines — still under the 700-line guideline but climbing. Consider extracting the Edit-Técnico sheet (≈140 lines) into its own component <TecnicoEditSheet/> for reuse and readability.",
+    "Both onSave (create) and onEditSave reuse identical bodega-chip JSX (≈45 lines × 2). Extract <BodegaChips bodegas value onChange/>.",
+    "In enviar_password_whatsapp the password update happens BEFORE the WhatsApp send, so even if mitiendapro fails the password is already rotated. This is intentional (per spec) but worth a code comment so future devs don't reorder it.",
+    "Welcome email build_welcome_email shows plain_password in the email body — by design, but the email is sent over Resend's HTTP infra. Make sure Resend logs / dashboard don't retain bodies indefinitely or scope access. Not a code bug, just an operational note.",
+    "The edit modal's WhatsApp button only checks editing?.telefono on render — if the admin types/edits the teléfono field in the modal, the button enabled-state does NOT update (it still uses editing.telefono, not editForm.telefono). Minor UX inconsistency."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tecnicos_iter6.py (new — 10 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% iter6 (10/10) · regression: 77/83 in full suite (6 PRE-EXISTING WA-test failures unrelated to iter6)",
+    "frontend": "~85% — modal opens, fields/testIDs/pre-fill all correct, but 422-handling crash prevents finishing the happy-path test in-browser"
+  },
+  "seed_data_creation": "Created (and DELETEd at teardown) ~5 ephemeral test técnicos via the iter6 pytest module (emails TEST_iter6_{hex}@mvg.cl). All cleaned up via session-scoped fixtures. One real welcome email was sent to ed0.2580@gmail.com during E1's manual smoke (id=343466b2-...). No leftover test data should remain in users_col after this run.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter6 backend test file: /app/backend/tests/test_tecnicos_iter6.py (10 tests, ~7s). The conftest 'tecnico_user' fixture is the only side-effect; it persists a TEST_tecnico_{hex} between sessions until manually deleted. To reproduce the 422→React-crash bug: login as admin on desktop 1440x900, go to /tecnicos, click the blue pencil on any card, change email to '<currentEmail>.test', click 'Guardar cambios'. The Pydantic detail array is `[{type:'value_error', loc:['body','email'], msg:'value is not a valid email address: The part after the @-sign is not valid. It should have a period.', …}]`. Fix in /app/frontend/src/api/client.ts axios interceptor by stringifying detail arrays before re-throwing. The Resend account-owner email is still 'ed0.2580@gmail.com'; any other recipient → mode='error' status 403 (expected). mitiendapro accepts only the real +34600850506; +56912345678 will always return mode='error'.",
+  "rca_of_issue": "BUG: React crash on 422 from edit modal. ROOT CAUSE: FastAPI's default 422 response shape is `{detail: [{type, loc, msg, input, ctx, url}, ...]}` (array of objects, not string). Frontend catch-block in tecnicos.tsx (and ~10 other admin files) does `showToast(e?.response?.data?.detail || 'Error', 'error')`. Toast.tsx renders the message inside <Text>{message}</Text>; React Native's Text refuses a non-string child and throws. STEPS: 1) login admin 2) open edit-tecnico modal 3) put invalid email like x@y.test 4) click 'Guardar cambios' → backend 422 → React tree unmounts under red error overlay. MITIGATION (one-liner in axios interceptor): `if (Array.isArray(error?.response?.data?.detail)) error.response.data.detail = error.response.data.detail.map((d:any)=>d.msg||JSON.stringify(d)).join(' · ');` This fixes ALL screens at once."
+}

@@ -19,6 +19,7 @@ import io
 from whatsapp_service import send_whatsapp, build_assignment_message
 from pdf_service import build_orden_pdf
 from suministros_module import build_router as build_suministros_router, init_suministros
+from email_service import send_email, build_welcome_email
 from fastapi.responses import StreamingResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -305,7 +306,83 @@ async def create_tecnico(payload: TecnicoCreate, _: dict = Depends(require_admin
         "created_at": now_iso(),
     }
     await users_col.insert_one(new_user)
-    return clean_user(new_user)
+
+    # Send welcome email (best-effort, non-blocking on failure)
+    welcome_result = None
+    try:
+        bodega_label = ""
+        region_label = ""
+        if payload.bodega_id:
+            bodega_doc = await db.bodegas.find_one({"id": payload.bodega_id})
+            if bodega_doc:
+                bodega_label = bodega_doc.get("nombre") or ""
+                region_label = bodega_doc.get("region") or ""
+        nombre_completo = f"{payload.nombre} {payload.apellidos}".strip()
+        html, text = build_welcome_email(
+            tecnico_nombre=nombre_completo,
+            tecnico_email=payload.email,
+            plain_password=payload.password,
+            bodega=bodega_label,
+            region=region_label,
+        )
+        welcome_result = await send_email(
+            to=[payload.email],
+            subject=f"Bienvenido a MVG Computación - {nombre_completo}",
+            html=html,
+            text=text,
+        )
+        logger.info("[Welcome email] %s -> %s", payload.email, welcome_result.get("mode"))
+    except Exception as e:
+        logger.warning("[Welcome email] error: %s", e)
+        welcome_result = {"mode": "error", "error": str(e)}
+
+    user = clean_user(new_user)
+    user["welcome_email"] = welcome_result
+    return user
+
+
+class PasswordWhatsApp(BaseModel):
+    password: str = Field(min_length=6)
+
+
+@api_router.post("/admin/tecnicos/{tecnico_id}/enviar-password-whatsapp")
+async def enviar_password_whatsapp(
+    tecnico_id: str,
+    payload: PasswordWhatsApp,
+    _: dict = Depends(require_admin),
+):
+    """Updates the technician's password AND sends it via WhatsApp.
+
+    The plain-text password is sent via WhatsApp ONCE in this message; the
+    DB only stores the bcrypt hash. The admin is responsible for ensuring
+    the channel is appropriate.
+    """
+    tec = await users_col.find_one({"id": tecnico_id, "role": "tecnico"})
+    if not tec:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    if not tec.get("telefono"):
+        raise HTTPException(
+            status_code=400, detail="El técnico no tiene teléfono registrado"
+        )
+    # Update password
+    await users_col.update_one(
+        {"id": tecnico_id},
+        {"$set": {"hashed_password": hash_password(payload.password)}},
+    )
+
+    nombre = f"{tec.get('nombre','')} {tec.get('apellidos','')}".strip()
+    msg = (
+        f"🔐 *MVG Computación - Credenciales*\n\n"
+        f"Hola {nombre},\n\n"
+        f"Tu nueva contraseña de acceso es:\n"
+        f"*{payload.password}*\n\n"
+        f"📧 Email: {tec.get('email')}\n\n"
+        f"⚠️ Por seguridad, cámbiala tras iniciar sesión.\n"
+        f"Mantén tus datos seguros y revisa la plataforma "
+        f"varias veces al día para mantener tus órdenes al día."
+    )
+    wa_result = await send_whatsapp(tec["telefono"], msg)
+    return {"ok": True, "whatsapp": wa_result}
 
 
 @api_router.get("/admin/tecnicos")
