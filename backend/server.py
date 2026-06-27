@@ -1452,6 +1452,7 @@ async def delete_pinpad_photo(
     target["lat"] = None
     target["lng"] = None
     target["address"] = None
+    target["accuracy_m"] = None
     await ordenes_col.update_one({"id": orden_id}, {"$set": {"pin_pads": pin_pads}})
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
     return await enrich_orden(o)
