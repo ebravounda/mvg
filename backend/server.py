@@ -853,6 +853,18 @@ async def upload_ordenes_excel(
     return summary
 
 
+@api_router.post("/admin/ordenes/cleanup")
+async def cleanup_ordenes(
+    days: int = Query(60, ge=1, le=365), _: dict = Depends(require_admin)
+):
+    """Elimina órdenes con created_at de hace más de N días (default 60)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_iso = cutoff.isoformat()
+    r = await ordenes_col.delete_many({"created_at": {"$lt": cutoff_iso}})
+    logger.info(f"[Cleanup] {r.deleted_count} órdenes eliminadas (> {days} días)")
+    return {"deleted": r.deleted_count, "days": days, "cutoff": cutoff_iso}
+
+
 @api_router.post("/admin/ordenes/reset")
 async def reset_ordenes(_: dict = Depends(require_admin)):
     """Elimina TODAS las órdenes (mantiene clientes, comercios y técnicos)."""
@@ -1148,6 +1160,7 @@ app.add_middleware(
 async def on_startup():
     await users_col.create_index("email", unique=True)
     await users_col.create_index("rut", unique=False, sparse=True)
+    await ordenes_col.create_index("created_at")
     existing = await users_col.find_one({"email": ADMIN_EMAIL.lower()})
     if not existing:
         admin_doc = {
@@ -1163,6 +1176,17 @@ async def on_startup():
         logger.info(f"Admin seed creado: {ADMIN_EMAIL}")
     else:
         logger.info(f"Admin ya existe: {ADMIN_EMAIL}")
+
+    # Auto-cleanup: delete ordenes older than 40 days on startup
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=40)
+        r = await ordenes_col.delete_many({"created_at": {"$lt": cutoff.isoformat()}})
+        if r.deleted_count:
+            logger.info(
+                f"[Startup cleanup] {r.deleted_count} órdenes > 40 días eliminadas"
+            )
+    except Exception as e:
+        logger.warning(f"Cleanup error: {e}")
 
 
 @app.on_event("shutdown")

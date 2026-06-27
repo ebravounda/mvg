@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
+import { showToast } from "@/src/components/Toast";
 import { StickyHeader } from "@/src/components/StickyHeader";
 import { colors, spacing, radius, fontSize } from "@/src/theme";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
@@ -33,6 +34,27 @@ export default function Dashboard() {
   const [ordenes, setOrdenes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+
+  const onCleanup = async () => {
+    if (cleaning) return;
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        "¿Eliminar todas las órdenes con más de 60 días de antigüedad? Esta acción no se puede deshacer."
+      );
+      if (!ok) return;
+    }
+    setCleaning(true);
+    try {
+      const r = await api.post("/admin/ordenes/cleanup?days=60");
+      showToast(`${r.data.deleted} órdenes antiguas eliminadas`, "success");
+      load();
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    } finally {
+      setCleaning(false);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -136,6 +158,24 @@ export default function Dashboard() {
                 <Text style={styles.linkText}>Ver todas</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              testID="cleanup-60d-btn"
+              onPress={onCleanup}
+              disabled={cleaning}
+              style={[styles.cleanupBtn, cleaning && { opacity: 0.6 }]}
+            >
+              <Ionicons name="trash-bin-outline" size={18} color={colors.danger} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cleanupTitle}>
+                  {cleaning ? "Eliminando..." : "Borrar datos 60 días de antigüedad"}
+                </Text>
+                <Text style={styles.cleanupSub}>
+                  Limpia órdenes antiguas. Auto-limpieza 40 días al iniciar.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
 
             {ordenes.length === 0 ? (
               <View style={styles.empty}>
@@ -328,4 +368,17 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   emptyBtnText: { color: "#fff", fontWeight: "700" },
+  cleanupBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: `${colors.danger}55`,
+    backgroundColor: `${colors.danger}10`,
+    marginBottom: spacing.md,
+  },
+  cleanupTitle: { color: colors.danger, fontWeight: "700", fontSize: fontSize.sm },
+  cleanupSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
 });

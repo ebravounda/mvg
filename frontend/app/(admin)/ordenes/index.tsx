@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   ScrollView,
   RefreshControl,
   Platform,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -38,6 +39,10 @@ export default function OrdenesList() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState("");
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState<"fecha" | "comuna" | "sucursal" | "cc">(
+    "fecha"
+  );
 
   // Create sheet
   const [createSheet, setCreateSheet] = useState(false);
@@ -93,6 +98,51 @@ export default function OrdenesList() {
       load();
     }, [load])
   );
+
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = items;
+    if (q) {
+      list = list.filter((o) => {
+        const blob = [
+          o.numero,
+          o.sucursal?.codigo_comercio,
+          o.sucursal?.direccion,
+          o.sucursal?.comuna,
+          o.sucursal?.region,
+          o.sucursal?.nombre,
+          o.cliente?.nombre,
+          o.cliente?.nombre_fantasia,
+          o.titulo,
+          o.tecnico ? `${o.tecnico.nombre} ${o.tecnico.apellidos}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return blob.includes(q);
+      });
+    }
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      const av = (() => {
+        if (sortBy === "comuna") return (a.sucursal?.comuna || "").toLowerCase();
+        if (sortBy === "sucursal")
+          return (a.sucursal?.nombre || a.sucursal?.codigo_comercio || "").toLowerCase();
+        if (sortBy === "cc") return (a.sucursal?.codigo_comercio || "").toLowerCase();
+        return a.created_at || "";
+      })();
+      const bv = (() => {
+        if (sortBy === "comuna") return (b.sucursal?.comuna || "").toLowerCase();
+        if (sortBy === "sucursal")
+          return (b.sucursal?.nombre || b.sucursal?.codigo_comercio || "").toLowerCase();
+        if (sortBy === "cc") return (b.sucursal?.codigo_comercio || "").toLowerCase();
+        return b.created_at || "";
+      })();
+      if (sortBy === "fecha") return bv.localeCompare(av); // desc by date
+      return av.localeCompare(bv);
+    });
+    return sorted;
+  }, [items, query, sortBy]);
 
   const openCreate = async () => {
     setActionsOpen(false);
@@ -277,11 +327,70 @@ export default function OrdenesList() {
         })}
       </ScrollView>
 
+      <View style={styles.searchBox}>
+        <Ionicons name="search" size={16} color={colors.textMuted} />
+        <TextInput
+          testID="ordenes-search"
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Buscar por CC, dirección, comuna, técnico..."
+          placeholderTextColor={colors.textDim}
+          style={styles.searchInput}
+          autoCapitalize="none"
+        />
+        {query.length > 0 && (
+          <TouchableOpacity onPress={() => setQuery("")}>
+            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.sortRow}
+        style={styles.sortScroll}
+      >
+        <Text style={styles.sortLabel}>Ordenar:</Text>
+        {[
+          { l: "Fecha", v: "fecha" },
+          { l: "Comuna", v: "comuna" },
+          { l: "Sucursal", v: "sucursal" },
+          { l: "CC", v: "cc" },
+        ].map((s) => {
+          const active = sortBy === s.v;
+          return (
+            <TouchableOpacity
+              key={s.v}
+              testID={`sort-${s.v}`}
+              onPress={() => setSortBy(s.v as any)}
+              style={[
+                styles.sortChip,
+                active && {
+                  backgroundColor: `${colors.accent}33`,
+                  borderColor: colors.accent,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.sortChipText,
+                  active && { color: colors.accent, fontWeight: "700" },
+                ]}
+              >
+                {s.l}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
       ) : (
         <FlatList
-          data={items}
+          data={filteredItems}
           keyExtractor={(o) => o.id}
           contentContainerStyle={{
             paddingHorizontal: spacing.lg,
@@ -628,6 +737,39 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   chipText: { color: colors.textMuted, fontSize: fontSize.sm },
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    height: 42,
+  },
+  searchInput: { flex: 1, color: colors.textMain, fontSize: fontSize.sm },
+  sortScroll: { maxHeight: 44, flexGrow: 0, marginTop: spacing.sm },
+  sortRow: {
+    paddingHorizontal: spacing.lg,
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  sortLabel: { color: colors.textMuted, fontSize: fontSize.xs, fontWeight: "700" },
+  sortChip: {
+    paddingHorizontal: spacing.md,
+    height: 30,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  sortChipText: { color: colors.textMuted, fontSize: fontSize.xs },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
