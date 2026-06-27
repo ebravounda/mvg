@@ -23,7 +23,8 @@ import { DeadlineBadge } from "@/src/components/DeadlineBadge";
 import { FormSheet } from "@/src/components/FormSheet";
 import { Field, Select, Btn } from "@/src/components/Form";
 import { showToast } from "@/src/components/Toast";
-import { colors, spacing, radius, fontSize } from "@/src/theme";
+import { useResponsive } from "@/src/hooks/useResponsive";
+import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 
 const FILTERS = [
   { label: "Todas", value: "" },
@@ -36,6 +37,7 @@ const FILTERS = [
 export default function OrdenesList() {
   const router = useRouter();
   const params = useLocalSearchParams<{ action?: string }>();
+  const { isDesktop } = useResponsive();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -294,112 +296,313 @@ export default function OrdenesList() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StickyHeader
         title="Órdenes"
+        subtitle="Gestiona y asigna órdenes de servicio"
         rightSlot={
-          <TouchableOpacity
-            testID="abrir-acciones-btn"
-            onPress={() => setActionsOpen(true)}
-            style={styles.headerCta}
-          >
-            <Ionicons name="add" size={20} color="#fff" />
-          </TouchableOpacity>
+          isDesktop ? (
+            <TouchableOpacity
+              testID="abrir-acciones-btn"
+              onPress={() => setActionsOpen(true)}
+              style={styles.headerCtaDesktop}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={18} color="#fff" />
+              <Text style={styles.headerCtaText}>Nueva orden</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              testID="abrir-acciones-btn"
+              onPress={() => setActionsOpen(true)}
+              style={styles.headerCta}
+            >
+              <Ionicons name="add" size={20} color="#fff" />
+            </TouchableOpacity>
+          )
         }
       />
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRow}
-        style={styles.filterScroll}
-      >
-        {FILTERS.map((f) => {
-          const active = filter === f.value;
-          return (
-            <TouchableOpacity
-              key={f.value || "all"}
-              testID={`filter-${f.value || "all"}`}
-              onPress={() => setFilter(f.value)}
-              style={[
-                styles.chip,
-                active && {
-                  backgroundColor: colors.primary,
-                  borderColor: colors.primary,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.chipText,
-                  active && { color: "#fff", fontWeight: "700" },
-                ]}
-              >
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      {isDesktop ? (
+        // ===== Desktop unified toolbar =====
+        <View style={styles.toolbarDesktop}>
+          <View style={styles.filterPillsRow}>
+            {FILTERS.map((f) => {
+              const active = filter === f.value;
+              return (
+                <TouchableOpacity
+                  key={f.value || "all"}
+                  testID={`filter-${f.value || "all"}`}
+                  onPress={() => setFilter(f.value)}
+                  style={[
+                    styles.chip,
+                    active && {
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      active && { color: "#fff", fontWeight: "700" },
+                    ]}
+                  >
+                    {f.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
 
-      <View style={styles.searchBox}>
-        <Ionicons name="search" size={16} color={colors.textMuted} />
-        <TextInput
-          testID="ordenes-search"
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Buscar por CC, dirección, comuna, técnico..."
-          placeholderTextColor={colors.textDim}
-          style={styles.searchInput}
-          autoCapitalize="none"
-        />
-        {query.length > 0 && (
-          <TouchableOpacity onPress={() => setQuery("")}>
-            <Ionicons name="close-circle" size={16} color={colors.textMuted} />
-          </TouchableOpacity>
-        )}
-      </View>
+          <View style={styles.toolbarBottomRow}>
+            <View style={styles.searchBoxDesktop}>
+              <Ionicons name="search" size={16} color={colors.textMuted} />
+              <TextInput
+                testID="ordenes-search"
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Buscar por CC, dirección, comuna, técnico..."
+                placeholderTextColor={colors.textDim}
+                style={styles.searchInput}
+                autoCapitalize="none"
+              />
+              {query.length > 0 && (
+                <TouchableOpacity onPress={() => setQuery("")}>
+                  <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.sortInlineRow}>
+              <Text style={styles.sortLabel}>Ordenar:</Text>
+              {[
+                { l: "Fecha", v: "fecha" },
+                { l: "Comuna", v: "comuna" },
+                { l: "Sucursal", v: "sucursal" },
+                { l: "CC", v: "cc" },
+              ].map((s) => {
+                const active = sortBy === s.v;
+                return (
+                  <TouchableOpacity
+                    key={s.v}
+                    testID={`sort-${s.v}`}
+                    onPress={() => setSortBy(s.v as any)}
+                    style={[
+                      styles.sortChip,
+                      active && {
+                        backgroundColor: `${colors.accent}22`,
+                        borderColor: colors.accent,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.sortChipText,
+                        active && { color: colors.accent, fontWeight: "700" },
+                      ]}
+                    >
+                      {s.l}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      ) : (
+        <>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterRow}
+            style={styles.filterScroll}
+          >
+            {FILTERS.map((f) => {
+              const active = filter === f.value;
+              return (
+                <TouchableOpacity
+                  key={f.value || "all"}
+                  testID={`filter-${f.value || "all"}-m`}
+                  onPress={() => setFilter(f.value)}
+                  style={[
+                    styles.chip,
+                    active && {
+                      backgroundColor: colors.primary,
+                      borderColor: colors.primary,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      active && { color: "#fff", fontWeight: "700" },
+                    ]}
+                  >
+                    {f.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.sortRow}
-        style={styles.sortScroll}
-      >
-        <Text style={styles.sortLabel}>Ordenar:</Text>
-        {[
-          { l: "Fecha", v: "fecha" },
-          { l: "Comuna", v: "comuna" },
-          { l: "Sucursal", v: "sucursal" },
-          { l: "CC", v: "cc" },
-        ].map((s) => {
-          const active = sortBy === s.v;
-          return (
-            <TouchableOpacity
-              key={s.v}
-              testID={`sort-${s.v}`}
-              onPress={() => setSortBy(s.v as any)}
-              style={[
-                styles.sortChip,
-                active && {
-                  backgroundColor: `${colors.accent}33`,
-                  borderColor: colors.accent,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.sortChipText,
-                  active && { color: colors.accent, fontWeight: "700" },
-                ]}
-              >
-                {s.l}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={16} color={colors.textMuted} />
+            <TextInput
+              testID="ordenes-search-m"
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Buscar por CC, dirección, comuna, técnico..."
+              placeholderTextColor={colors.textDim}
+              style={styles.searchInput}
+              autoCapitalize="none"
+            />
+            {query.length > 0 && (
+              <TouchableOpacity onPress={() => setQuery("")}>
+                <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.sortRow}
+            style={styles.sortScroll}
+          >
+            <Text style={styles.sortLabel}>Ordenar:</Text>
+            {[
+              { l: "Fecha", v: "fecha" },
+              { l: "Comuna", v: "comuna" },
+              { l: "Sucursal", v: "sucursal" },
+              { l: "CC", v: "cc" },
+            ].map((s) => {
+              const active = sortBy === s.v;
+              return (
+                <TouchableOpacity
+                  key={s.v}
+                  testID={`sort-${s.v}-m`}
+                  onPress={() => setSortBy(s.v as any)}
+                  style={[
+                    styles.sortChip,
+                    active && {
+                      backgroundColor: `${colors.accent}33`,
+                      borderColor: colors.accent,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.sortChipText,
+                      active && { color: colors.accent, fontWeight: "700" },
+                    ]}
+                  >
+                    {s.l}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </>
+      )}
 
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
+      ) : isDesktop ? (
+        <ScrollView
+          contentContainerStyle={{ padding: 32, paddingTop: 20 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                load();
+              }}
+              tintColor={colors.primary}
+            />
+          }
+        >
+          <View style={styles.tableSummary}>
+            <Text style={styles.tableSummaryText}>
+              {filteredItems.length} {filteredItems.length === 1 ? "orden" : "órdenes"}
+            </Text>
+          </View>
+          <View style={styles.tableCard}>
+            <View style={styles.tableHeadRow}>
+              <Text style={[styles.thText, { flex: 1.1 }]}>Orden</Text>
+              <Text style={[styles.thText, { flex: 1.8 }]}>Cliente / Título</Text>
+              <Text style={[styles.thText, { flex: 1.3 }]}>Comercio</Text>
+              <Text style={[styles.thText, { flex: 1.2 }]}>Técnico</Text>
+              <Text style={[styles.thText, { width: 100 }]}>Prioridad</Text>
+              <Text style={[styles.thText, { width: 120 }]}>Estado</Text>
+              <Text style={[styles.thText, { width: 120 }]}>Plazo</Text>
+            </View>
+            {filteredItems.length === 0 ? (
+              <View style={styles.tableEmpty}>
+                <Ionicons name="clipboard-outline" size={36} color={colors.textDim} />
+                <Text style={styles.emptyTxt}>No hay órdenes</Text>
+              </View>
+            ) : (
+              filteredItems.map((o, idx) => (
+                <TouchableOpacity
+                  key={o.id}
+                  testID={`orden-card-${o.id}`}
+                  style={[
+                    styles.tableRow,
+                    idx === filteredItems.length - 1 && { borderBottomWidth: 0 },
+                  ]}
+                  onPress={() => router.push(`/(admin)/ordenes/${o.id}`)}
+                  activeOpacity={0.6}
+                >
+                  <View style={{ flex: 1.1 }}>
+                    <Text style={styles.tdNumero}>{o.numero}</Text>
+                  </View>
+                  <View style={{ flex: 1.8, paddingRight: 8 }}>
+                    <Text style={styles.tdTitle} numberOfLines={1}>
+                      {o.titulo}
+                    </Text>
+                    <Text style={styles.tdMeta} numberOfLines={1}>
+                      {o.cliente?.nombre_fantasia || o.cliente?.nombre}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1.3, paddingRight: 8 }}>
+                    {o.sucursal?.codigo_comercio ? (
+                      <>
+                        <Text style={styles.tdCC} numberOfLines={1}>
+                          CC {o.sucursal.codigo_comercio}
+                        </Text>
+                        <Text style={styles.tdMeta} numberOfLines={1}>
+                          {o.sucursal.comuna || o.sucursal.direccion || ""}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={styles.tdMeta}>—</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1.2, paddingRight: 8 }}>
+                    <Text
+                      style={[
+                        styles.tdTec,
+                        !o.tecnico && { color: colors.pending, fontWeight: "700" },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {o.tecnico
+                        ? `${o.tecnico.nombre} ${o.tecnico.apellidos}`
+                        : "Sin asignar"}
+                    </Text>
+                  </View>
+                  <View style={{ width: 100 }}>
+                    <PriorityBadge priority={o.prioridad} />
+                  </View>
+                  <View style={{ width: 120 }}>
+                    <StatusBadge status={o.estado} />
+                  </View>
+                  <View style={{ width: 120 }}>
+                    <DeadlineBadge fechaLimite={o.fecha_limite} />
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </ScrollView>
       ) : (
         <FlatList
           data={filteredItems}
@@ -730,6 +933,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  headerCtaDesktop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    ...shadow.sm,
+  },
+  headerCtaText: { color: "#fff", fontWeight: "700", fontSize: fontSize.sm },
   filterScroll: { maxHeight: 56, flexGrow: 0 },
   filterRow: {
     paddingHorizontal: spacing.lg,
@@ -846,4 +1060,92 @@ const styles = StyleSheet.create({
   fileText: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
   fileSub: { color: colors.textMuted, fontSize: fontSize.xs },
   help: { color: colors.textMuted, fontSize: fontSize.sm, lineHeight: 18 },
+
+  // Desktop toolbar (unified filter + search + sort)
+  toolbarDesktop: {
+    paddingHorizontal: 32,
+    paddingTop: 20,
+    paddingBottom: 16,
+    gap: 14,
+    backgroundColor: colors.background,
+  },
+  filterPillsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+  toolbarBottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    flexWrap: "wrap",
+  },
+  searchBoxDesktop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    height: 42,
+    flex: 1,
+    minWidth: 280,
+  },
+  sortInlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+
+  // Desktop table
+  tableSummary: { marginBottom: spacing.md },
+  tableSummaryText: {
+    color: colors.textMuted,
+    fontSize: fontSize.xs,
+    fontWeight: "600",
+  },
+  tableCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
+    ...shadow.sm,
+  },
+  tableHeadRow: {
+    flexDirection: "row",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: colors.surfaceAlt,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.md,
+    alignItems: "center",
+  },
+  thText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  tableRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    gap: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  tdNumero: { color: colors.accent, fontWeight: "700", fontSize: fontSize.sm },
+  tdTitle: { color: colors.textMain, fontWeight: "600", fontSize: fontSize.sm },
+  tdMeta: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+  tdCC: { color: colors.textMain, fontWeight: "700", fontSize: fontSize.sm },
+  tdTec: { color: colors.textMain, fontSize: fontSize.sm },
+  tableEmpty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
+  emptyTxt: { color: colors.textMuted, fontSize: fontSize.md },
 });

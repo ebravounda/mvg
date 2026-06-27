@@ -1,26 +1,56 @@
-// Theme constants for MVG Computación
+// Theme constants for MVG Computación - Professional SaaS palette
 export const colors = {
-  background: "#0B1121",
-  surface: "#1E293B",
-  surfaceAlt: "#0F172A",
-  surfaceElevated: "#283447",
+  // Surfaces (light, content area)
+  background: "#F5F7FB",
+  surface: "#FFFFFF",
+  surfaceAlt: "#F8FAFC",
+  surfaceElevated: "#FFFFFF",
+  surfaceMuted: "#F1F5F9",
+
+  // Brand
   primary: "#2563EB",
   primaryHover: "#1D4ED8",
-  accent: "#F97316",
+  primarySoft: "#DBEAFE",
+  accent: "#F97316", // MVG orange
   accentHover: "#EA580C",
-  textMain: "#F8FAFC",
-  textMuted: "#94A3B8",
-  textDim: "#64748B",
-  border: "#334155",
-  borderLight: "#475569",
-  pending: "#F59E0B",
-  inProgress: "#3B82F6",
-  completed: "#10B981",
-  highPriority: "#EF4444",
-  mediumPriority: "#F59E0B",
-  lowPriority: "#10B981",
-  danger: "#EF4444",
+  accentSoft: "#FFEDD5",
+
+  // Text
+  textMain: "#0F172A",
+  textMuted: "#64748B",
+  textDim: "#94A3B8",
+
+  // Borders
+  border: "#E2E8F0",
+  borderLight: "#F1F5F9",
+  borderStrong: "#CBD5E1",
+
+  // Status
+  pending: "#D97706",
+  pendingSoft: "#FEF3C7",
+  inProgress: "#2563EB",
+  inProgressSoft: "#DBEAFE",
+  completed: "#059669",
+  completedSoft: "#D1FAE5",
+  highPriority: "#DC2626",
+  mediumPriority: "#D97706",
+  lowPriority: "#059669",
+  danger: "#DC2626",
+  dangerSoft: "#FEE2E2",
+  warning: "#D97706",
   white: "#FFFFFF",
+
+  // Sidebar (dark for SaaS contrast)
+  sidebarBg: "#0F172A",
+  sidebarBgAlt: "#1E293B",
+  sidebarBorder: "#1E293B",
+  sidebarText: "#94A3B8",
+  sidebarTextActive: "#FFFFFF",
+  sidebarActiveBg: "rgba(255,255,255,0.08)",
+  sidebarHover: "rgba(255,255,255,0.04)",
+
+  // Overlay (modals)
+  overlay: "rgba(15,23,42,0.55)",
 };
 
 export const spacing = {
@@ -48,6 +78,30 @@ export const fontSize = {
   xl: 20,
   xxl: 26,
   xxxl: 32,
+};
+
+export const shadow = {
+  sm: {
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  md: {
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  lg: {
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 6,
+  },
 };
 
 export const MVG_LOGO_URL =
