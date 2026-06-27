@@ -1,42 +1,59 @@
-"""WhatsApp notification helper.
+"""WhatsApp notification helper for mitiendapro.com bot.
 
-Sends notifications via a configurable webhook (mitiendapro.com style bot).
-If WHATSAPP_BOT_URL is empty, just logs the intended message.
+Endpoint: POST https://mitiendapro.com/api/v1/send
+Headers: Authorization: Bearer <sk_live_...>
+Body: {"instanceName": "...", "number": "5491155...", "type": "text", "message": "..."}
 """
 import os
 import logging
+import re
 import httpx
 from typing import Optional
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Ensure .env is loaded even if module imported before server.py runs load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
 
 logger = logging.getLogger(__name__)
 
-WHATSAPP_BOT_URL = os.environ.get("WHATSAPP_BOT_URL", "").strip()
-WHATSAPP_BOT_TOKEN = os.environ.get("WHATSAPP_BOT_TOKEN", "").strip()
+
+def _env(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
+
+
+def _clean_number(phone: str) -> str:
+    """Strip all non-digit chars. Ensures Chile country code if missing."""
+    digits = re.sub(r"\D", "", phone or "")
+    # If 9-digit Chilean mobile starting with 9, prepend country code 56
+    if len(digits) == 9 and digits.startswith("9"):
+        digits = "56" + digits
+    elif len(digits) == 8:
+        digits = "569" + digits
+    return digits
 
 
 def _wa_link(phone: str, message: str) -> str:
     import urllib.parse
 
-    clean = "".join(ch for ch in phone if ch.isdigit())
+    clean = _clean_number(phone)
     text = urllib.parse.quote(message)
     return f"https://wa.me/{clean}?text={text}"
 
 
 async def send_whatsapp(phone: Optional[str], message: str) -> dict:
-    """Send a WhatsApp message. Always returns a dict with {ok, mode, detail, wa_link}.
-
-    Modes:
-      - "sent": webhook responded 2xx
-      - "fallback_link": no URL configured, returns wa.me link
-      - "error": webhook failed (still returns wa.me link as fallback)
-    """
     if not phone:
         return {"ok": False, "mode": "no_phone", "detail": "Sin teléfono", "wa_link": None}
 
+    cleaned = _clean_number(phone)
     wa_link = _wa_link(phone, message)
 
-    if not WHATSAPP_BOT_URL:
-        logger.info(f"[WhatsApp:fallback_link] to={phone}")
+    bot_url = _env("WHATSAPP_BOT_URL")
+    bot_token = _env("WHATSAPP_BOT_TOKEN")
+    bot_instance = _env("WHATSAPP_BOT_INSTANCE")
+
+    if not bot_url or not bot_token:
+        logger.info(f"[WhatsApp:fallback_link] to={cleaned}")
         return {
             "ok": True,
             "mode": "fallback_link",
@@ -44,30 +61,37 @@ async def send_whatsapp(phone: Optional[str], message: str) -> dict:
             "wa_link": wa_link,
         }
 
-    headers = {"Content-Type": "application/json"}
-    if WHATSAPP_BOT_TOKEN:
-        headers["Authorization"] = f"Bearer {WHATSAPP_BOT_TOKEN}"
-
-    payload = {"to": phone, "phone": phone, "message": message, "text": message}
+    headers = {
+        "Authorization": f"Bearer {bot_token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "instanceName": bot_instance,
+        "number": cleaned,
+        "type": "text",
+        "message": message,
+    }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            res = await client.post(WHATSAPP_BOT_URL, json=payload, headers=headers)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.post(bot_url, json=payload, headers=headers)
             if 200 <= res.status_code < 300:
-                logger.info(f"[WhatsApp:sent] to={phone} status={res.status_code}")
+                logger.info(
+                    f"[WhatsApp:sent] instance={bot_instance} to={cleaned} status={res.status_code}"
+                )
                 return {
                     "ok": True,
                     "mode": "sent",
-                    "detail": "Mensaje enviado",
+                    "detail": "Mensaje enviado por mitiendapro",
                     "wa_link": wa_link,
                 }
             logger.warning(
-                f"[WhatsApp:error] to={phone} status={res.status_code} body={res.text[:200]}"
+                f"[WhatsApp:error] to={cleaned} status={res.status_code} body={res.text[:300]}"
             )
             return {
                 "ok": False,
                 "mode": "error",
-                "detail": f"Bot respondió {res.status_code}",
+                "detail": f"Bot respondió {res.status_code}: {res.text[:120]}",
                 "wa_link": wa_link,
             }
     except Exception as e:
