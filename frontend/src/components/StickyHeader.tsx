@@ -85,11 +85,13 @@ export const StickyHeader: React.FC<Props> = ({
               <Ionicons name="chevron-back" size={22} color={colors.textMain} />
             </TouchableOpacity>
           ) : (
-            <Image
-              source={{ uri: MVG_LOGO_URL }}
-              style={styles.logo}
-              resizeMode="contain"
-            />
+            <View style={styles.logoBadge}>
+              <Image
+                source={{ uri: MVG_LOGO_URL }}
+                style={styles.logo}
+                resizeMode="contain"
+              />
+            </View>
           )}
           {title ? (
             <Text style={styles.title} numberOfLines={1}>
@@ -136,7 +138,17 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   right: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  logo: { width: 64, height: 30 },
+  logoBadge: {
+    width: 44,
+    height: 44,
+    backgroundColor: "#000",
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    padding: 4,
+  },
+  logo: { width: 36, height: 36 },
   title: {
     color: colors.textMain,
     fontSize: fontSize.lg,

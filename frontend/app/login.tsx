@@ -60,12 +60,14 @@ export default function LoginScreen() {
     <View style={[styles.card, isDesktop && styles.cardDesktop]}>
       {!isDesktop && (
         <View style={styles.mobileBrand}>
-          <Image
-            source={{ uri: MVG_LOGO_URL }}
-            style={styles.mobileLogo}
-            resizeMode="contain"
-            testID="login-logo"
-          />
+          <View style={styles.mobileLogoBg}>
+            <Image
+              source={{ uri: MVG_LOGO_URL }}
+              style={styles.mobileLogo}
+              resizeMode="contain"
+              testID="login-logo"
+            />
+          </View>
         </View>
       )}
 
@@ -278,11 +280,11 @@ const styles = StyleSheet.create({
     marginBottom: 56,
   },
   brandLogo: {
-    width: 180,
-    height: 180,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 6,
+    width: 210,
+    height: 210,
+    backgroundColor: "#000",
+    borderRadius: 24,
+    overflow: "hidden",
   },
   brandName: {
     color: "#fff",
@@ -372,7 +374,21 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
   },
   mobileBrand: { alignItems: "center", marginBottom: spacing.xl },
-  mobileLogo: { width: 160, height: 160 },
+  mobileLogoBg: {
+    width: 168,
+    height: 168,
+    backgroundColor: "#000",
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  mobileLogo: { width: 158, height: 158 },
 
   // ---- CARD ----
   card: {
