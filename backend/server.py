@@ -611,6 +611,60 @@ async def create_orden(payload: OrdenCreate, admin: dict = Depends(require_admin
     count = await ordenes_col.count_documents({})
     numero = f"OS-{datetime.now().year}-{count + 1:04d}"
 
+    # Auto-load pin_pads from prior orders of this comercio (each DDLL=1 pin pad)
+    # so the technician sees all pin pads to attend, not an empty list.
+    pin_pads_inherit: list = []
+    seen_keys: set = set()
+    prior_ordenes = await ordenes_col.find(
+        {"sucursal_id": payload.sucursal_id}, {"_id": 0, "pin_pads": 1, "serie": 1, "modelo": 1, "ddll": 1}
+    ).to_list(2000)
+    for po in prior_ordenes:
+        for pp in po.get("pin_pads") or []:
+            key = (pp.get("serie") or "") + "|" + (pp.get("ddll") or "")
+            if not key.strip("|") or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            pin_pads_inherit.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "serie": pp.get("serie"),
+                    "modelo": pp.get("modelo"),
+                    "ddll": pp.get("ddll"),
+                    "fotos": [],
+                    "estado": "pendiente",
+                }
+            )
+        # legacy single-pinpad ordenes (no pin_pads array)
+        if not po.get("pin_pads") and (po.get("serie") or po.get("ddll")):
+            key = (po.get("serie") or "") + "|" + (po.get("ddll") or "")
+            if key.strip("|") and key not in seen_keys:
+                seen_keys.add(key)
+                pin_pads_inherit.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "serie": po.get("serie"),
+                        "modelo": po.get("modelo"),
+                        "ddll": po.get("ddll"),
+                        "fotos": [],
+                        "estado": "pendiente",
+                    }
+                )
+
+    # If admin provided a single serie/ddll on the form, ensure it is in pin_pads
+    if payload.serie or payload.ddll:
+        key = (payload.serie or "") + "|" + (payload.ddll or "")
+        if key.strip("|") and key not in seen_keys:
+            pin_pads_inherit.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "serie": payload.serie,
+                    "modelo": payload.modelo,
+                    "ddll": payload.ddll,
+                    "fotos": [],
+                    "estado": "pendiente",
+                }
+            )
+
     doc = {
         "id": str(uuid.uuid4()),
         "numero": numero,
@@ -623,6 +677,7 @@ async def create_orden(payload: OrdenCreate, admin: dict = Depends(require_admin
         "serie": payload.serie,
         "modelo": payload.modelo,
         "ddll": payload.ddll,
+        "pin_pads": pin_pads_inherit,
         "fecha_limite": payload.fecha_limite,
         "estado": "pendiente",
         "evidencia_base64": None,
@@ -1222,6 +1277,53 @@ async def get_orden(orden_id: str, current: dict = Depends(get_current_user)):
     # Scope check for tecnico
     if current["role"] == "tecnico" and o.get("tecnico_id") != current["id"]:
         raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    # Lazy backfill: if pin_pads is empty, try to inherit from previous orders
+    # of the same comercio (sucursal). Each DDLL/Serie is one pin pad.
+    if not o.get("pin_pads"):
+        seen_keys: set = set()
+        pp_inherit: list = []
+        prior = await ordenes_col.find(
+            {
+                "sucursal_id": o.get("sucursal_id"),
+                "id": {"$ne": o["id"]},
+            },
+            {"_id": 0, "pin_pads": 1, "serie": 1, "modelo": 1, "ddll": 1},
+        ).to_list(2000)
+        for po in prior:
+            for pp in po.get("pin_pads") or []:
+                key = (pp.get("serie") or "") + "|" + (pp.get("ddll") or "")
+                if not key.strip("|") or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                pp_inherit.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "serie": pp.get("serie"),
+                        "modelo": pp.get("modelo"),
+                        "ddll": pp.get("ddll"),
+                        "fotos": [],
+                        "estado": "pendiente",
+                    }
+                )
+            if not po.get("pin_pads") and (po.get("serie") or po.get("ddll")):
+                key = (po.get("serie") or "") + "|" + (po.get("ddll") or "")
+                if key.strip("|") and key not in seen_keys:
+                    seen_keys.add(key)
+                    pp_inherit.append(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "serie": po.get("serie"),
+                            "modelo": po.get("modelo"),
+                            "ddll": po.get("ddll"),
+                            "fotos": [],
+                            "estado": "pendiente",
+                        }
+                    )
+        if pp_inherit:
+            await ordenes_col.update_one(
+                {"id": o["id"]}, {"$set": {"pin_pads": pp_inherit}}
+            )
+            o["pin_pads"] = pp_inherit
     return await enrich_orden(o)
 
 

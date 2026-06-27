@@ -80,11 +80,16 @@ export default function TecnicoLayout() {
           headerShown: false,
           tabBarActiveTintColor: colors.primary,
           tabBarInactiveTintColor: colors.textMuted,
+          tabBarLabelStyle: { fontSize: 11, fontWeight: "600", paddingBottom: 2 },
+          tabBarIconStyle: { marginTop: 2 },
           tabBarStyle: {
             backgroundColor: colors.surfaceAlt,
             borderTopColor: colors.border,
-            height: 60 + insets.bottom,
-            paddingBottom: insets.bottom + 6,
+            // On web/PWA the bottom safe-area can be 0 even when the browser
+            // chrome (Safari URL bar) overlaps the bottom — add a generous
+            // baseline padding so the icons + labels are never clipped.
+            height: 64 + Math.max(insets.bottom, Platform.OS === "web" ? 24 : 0),
+            paddingBottom: Math.max(insets.bottom, Platform.OS === "web" ? 24 : 6) + 4,
             paddingTop: 6,
           },
         }}
