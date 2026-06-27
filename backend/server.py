@@ -550,6 +550,27 @@ async def asignar_tecnico(
     return {"orden": enriched, "whatsapp": wa}
 
 
+@api_router.post("/admin/ordenes/{orden_id}/reenviar-whatsapp")
+async def reenviar_whatsapp(orden_id: str, _: dict = Depends(require_admin)):
+    """Re-send the WhatsApp assignment message to the technician currently assigned.
+
+    Use this when the previous send failed, the technician didn't receive it, or
+    the admin simply wants to resend the order details.
+    """
+    orden = await ordenes_col.find_one({"id": orden_id})
+    if not orden:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if not orden.get("tecnico_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="La orden no tiene técnico asignado. Asigna un técnico primero.",
+        )
+    wa = await _send_assignment_whatsapp(orden_id)
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    enriched = await enrich_orden(o)
+    return {"orden": enriched, "whatsapp": wa}
+
+
 @api_router.post("/admin/ordenes/upload-excel")
 async def upload_ordenes_excel(
     file: UploadFile = File(...),

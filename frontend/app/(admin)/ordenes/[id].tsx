@@ -90,6 +90,38 @@ export default function OrdenDetalle() {
     }
   };
 
+  const [reenviando, setReenviando] = useState(false);
+  const onReenviarWhatsApp = async () => {
+    if (reenviando) return;
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        `¿Reenviar esta orden por WhatsApp al técnico${
+          orden?.tecnico ? ` ${orden.tecnico.nombre} ${orden.tecnico.apellidos}` : ""
+        }?`
+      );
+      if (!ok) return;
+    }
+    setReenviando(true);
+    try {
+      const r = await api.post(`/admin/ordenes/${id}/reenviar-whatsapp`);
+      const wa = r.data?.whatsapp;
+      if (wa?.mode === "sent") {
+        showToast("WhatsApp reenviado correctamente ✓", "success");
+      } else if (wa?.mode === "fallback_link") {
+        showToast("Mensaje preparado · Abre WhatsApp manualmente", "info");
+      } else if (wa?.mode === "no_phone") {
+        showToast("El técnico no tiene teléfono registrado", "error");
+      } else {
+        showToast("Error al reenviar WhatsApp", "error");
+      }
+      load();
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error al reenviar", "error");
+    } finally {
+      setReenviando(false);
+    }
+  };
+
   const onDelete = async () => {
     try {
       await api.delete(`/admin/ordenes/${id}`);
@@ -321,6 +353,25 @@ export default function OrdenDetalle() {
               />
             }
           />
+
+          {orden.tecnico && (
+            <TouchableOpacity
+              testID="reenviar-whatsapp-btn"
+              onPress={onReenviarWhatsApp}
+              disabled={reenviando}
+              activeOpacity={0.85}
+              style={[styles.waResendBtn, reenviando && { opacity: 0.6 }]}
+            >
+              {reenviando ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="logo-whatsapp" size={18} color="#fff" />
+                  <Text style={styles.waResendText}>Reenviar Orden al WhatsApp</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </Section>
 
         <Section title="Descripción">
@@ -572,4 +623,15 @@ const styles = StyleSheet.create({
     marginTop: 4,
     backgroundColor: colors.surface,
   },
+  waResendBtn: {
+    height: 48,
+    borderRadius: radius.md,
+    backgroundColor: "#25D366", // WhatsApp green
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+  },
+  waResendText: { color: "#fff", fontWeight: "700", fontSize: fontSize.md },
 });

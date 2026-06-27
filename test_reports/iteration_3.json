@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 3 testing for (1) FormSheet centered-modal + scrollbar on desktop / bottom-sheet on mobile, and (2) the new POST /api/admin/ordenes/{id}/reenviar-whatsapp endpoint + frontend 'Reenviar Orden al WhatsApp' button. All tests passed end-to-end. Backend pytest: 6/6 green (regression PATCH /asignar still 200; reenviar-whatsapp returns 200 when técnico is assigned, 400 when not, 404 for unknown id, 401 without auth, 403 for técnico role). Frontend on desktop 1440x900: 'Agregar técnico' modal, 'Nuevo cliente' modal and 'Crear orden manual' modal all open CENTERED (left=441 = (1440-558)/2, top=130, max-width 558px) instead of bottom-sheet; the Nueva orden modal has a real ScrollView with computed scrollbar-width:'thin' that scrolls from top to bottom revealing the submit 'Crear orden' button correctly. Order detail page for an orden with técnico shows the green (rgb(37,211,102) = #25D366) 'Reenviar Orden al WhatsApp' button (testID reenviar-whatsapp-btn) below 'Asignar/Reasignar técnico'; clicking it fires POST /api/admin/ordenes/{id}/reenviar-whatsapp → 200 with full {orden, whatsapp:{mode, wa_link,...}} payload and the WhatsApp panel updates with 'WhatsApp: <mode>' + 'Abrir WhatsApp' fallback link. Order detail for an unassigned orden correctly HIDES the button. Mobile viewport 390x844: same modal opens as bottom-sheet (left=0, width=390) — original behavior preserved. The third-party mitiendapro WhatsApp bot returned 500 for the test phone number (+56912345678 is not a real WhatsApp number), so whatsapp.mode came back as 'error' with a valid wa.me fallback link — backend behavior is correct, this is not a regression.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/admin/ordenes/{id}/reenviar-whatsapp",
+        "issue": "When the upstream WhatsApp bot fails (e.g. mitiendapro returns 500 for an unreachable number), the response carries whatsapp.mode='error' AND a valid wa_link. The frontend currently shows the 'Error al reenviar WhatsApp' toast for mode='error' even though a usable wa.me link is provided. Consider falling back to mode='fallback_link' (or surfacing wa_link in the toast) so the admin can immediately open WhatsApp manually instead of seeing only an error."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Reenviar WhatsApp toast UX",
+        "issue": "When backend returns whatsapp.mode='error' but includes a wa_link, the toast says 'Error al reenviar WhatsApp' rather than guiding the admin to use the 'Abrir WhatsApp' fallback button that appears on the page. Functionally OK (the Abrir WhatsApp button works), just a UX nit.",
+        "affected_testIDs": ["reenviar-whatsapp-btn"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Order detail (admin)",
+        "issues": [
+          "Console emits warning 'Unexpected text node: . A text node cannot be a child of a <View>' on order detail – stray whitespace/string between View children somewhere. Pre-existing, not caused by this iteration but worth cleaning up."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_mvg_iter3.py",
+    "/app/test_reports/pytest/pytest_iter3.xml"
+  ],
+  "action_items": [
+    "(Optional UX) In /app/frontend/app/(admin)/ordenes/[id].tsx onReenviarWhatsApp(): treat wa?.mode === 'error' && wa?.wa_link as a fallback-link case (show info toast 'Mensaje preparado · Abre WhatsApp manualmente') rather than an error toast.",
+    "(Optional cleanup) Investigate 'Unexpected text node' warning on order detail screen – likely a stray space or conditional rendering returning a string inside a <View>."
+  ],
+  "critical_code_review_comments": [
+    "FormSheet desktop branch uses inline web-only scrollbarWidth/scrollbarColor via @ts-ignore. Works, but consider extracting to a Platform.OS === 'web' helper to silence the comments and stay typed.",
+    "reenviar_whatsapp endpoint correctly delegates to _send_assignment_whatsapp; the helper itself stores whatsapp_last on the orden, so the UI re-fetch via load() shows the latest send status — good pattern.",
+    "Backend already excludes _id via {'_id': 0} projections; enrich_orden + reenviar_whatsapp return clean serializable docs.",
+    "Confirm dialog uses window.confirm() (web-only). For native iOS/Android builds this will be a no-op confirm() that returns undefined; consider Alert.alert with two-button callback for true cross-platform parity (not blocking on web)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mvg_iter3.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6 iter3; 32/32 cumulative)", "frontend": "100% on critical scenarios (desktop modal centering + scroll, reenviar button visibility + 200 response, hidden when no técnico, mobile bottom-sheet)"},
+  "seed_data_creation": "Reused existing ordenes from iter2 Excel import (~543 ordenes). The session-scoped tecnico fixture (TEST_tecnico_<uuid>@mvg.cl) was assigned to one orden to set up the reenviar-whatsapp scenarios. A new TEST_iter3_<hash> orden was created without técnico to assert the 400 response. No destructive cleanup needed beyond what conftest already does.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter3 tests live at /app/backend/tests/test_mvg_iter3.py and share conftest with iter1/iter2. Run: pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml. The mitiendapro WhatsApp bot is live and returns 500 for unreachable numbers — so /reenviar-whatsapp responses can legitimately have whatsapp.mode in {'sent','fallback_link','error','no_phone'}. Tests assert any of these is acceptable. Desktop FormSheet centering verified by computing bounding box of the modal card and confirming horizontal centering (left = (vw - cardW)/2). Mobile bottom-sheet verified by left=0 and width=viewport_width. The 'Unexpected text node' console warning on order detail is pre-existing — not from this iteration's changes.",
+  "rca_of_issue": "N/A — no bugs to RCA. The frontend UX nit about 'Error' toast when wa_link is present is documented in action_items rather than as a bug."
+}
