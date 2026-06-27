@@ -12,7 +12,7 @@ import {
   TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { api, API_BASE } from "@/src/api/client";
@@ -35,6 +35,7 @@ const FILTERS = [
 
 export default function OrdenesList() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ action?: string }>();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -98,6 +99,17 @@ export default function OrdenesList() {
       load();
     }, [load])
   );
+
+  useEffect(() => {
+    if (params?.action === "upload") {
+      setUploadFile(null);
+      setUploadFecha("");
+      setUploadPrioridad("media");
+      setUploadSheet(true);
+      // clear param so it doesn't re-open
+      router.setParams({ action: "" } as any);
+    }
+  }, [params?.action, router]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -539,7 +551,7 @@ export default function OrdenesList() {
         testID="upload-excel-sheet"
       >
         <Text style={styles.help}>
-          Selecciona un archivo Excel con la pestaña "CC" (columnas: RUT,
+          Selecciona un archivo Excel con la pestaña CC (columnas: RUT,
           NOM_RAZON_SOCIAL, NOM_FANTASIA, CC, DIRECCION, COMUNA, #REGION,
           M_MODELO, SERIEPI, DDLL).
         </Text>

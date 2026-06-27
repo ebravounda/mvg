@@ -15,6 +15,8 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { showToast } from "@/src/components/Toast";
 import { StickyHeader } from "@/src/components/StickyHeader";
+import { PageContainer } from "@/src/components/PageContainer";
+import { useResponsive } from "@/src/hooks/useResponsive";
 import { colors, spacing, radius, fontSize } from "@/src/theme";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
 
@@ -30,6 +32,7 @@ interface Stats {
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
+  const { isDesktop } = useResponsive();
   const [stats, setStats] = useState<Stats | null>(null);
   const [ordenes, setOrdenes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,10 +99,33 @@ export default function Dashboard() {
           />
         }
       >
-        <Text style={styles.greeting}>
+        <PageContainer style={{ padding: isDesktop ? 32 : 16 }}>
+        <Text style={[styles.greeting, isDesktop && { fontSize: 36 }]}>
           Hola, {user?.nombre || "Admin"}
         </Text>
         <Text style={styles.greetingSub}>Resumen de hoy</Text>
+
+        <TouchableOpacity
+          testID="hero-upload-excel"
+          style={[styles.heroCta, isDesktop && { padding: 28 }]}
+          onPress={() => router.push("/(admin)/ordenes?action=upload" as any)}
+          activeOpacity={0.9}
+        >
+          <View style={styles.heroIcon}>
+            <Ionicons name="cloud-upload" size={isDesktop ? 36 : 28} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.heroTitle, isDesktop && { fontSize: 22 }]}>
+              Subir planilla semanal
+            </Text>
+            <Text style={styles.heroSub}>
+              Carga el Excel de FEMSA · Crea/actualiza comercios y pin pads
+            </Text>
+          </View>
+          <View style={styles.heroArrow}>
+            <Ionicons name="arrow-forward" size={20} color={colors.accent} />
+          </View>
+        </TouchableOpacity>
 
         {loading ? (
           <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
@@ -228,6 +254,7 @@ export default function Dashboard() {
             )}
           </>
         )}
+        </PageContainer>
       </ScrollView>
     </SafeAreaView>
   );
@@ -265,7 +292,7 @@ const QuickStat: React.FC<{ value: number; label: string; icon: any }> = ({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: spacing.lg, paddingBottom: 80 },
+  scroll: { paddingBottom: 80 },
   greeting: {
     color: colors.textMain,
     fontSize: fontSize.xxl,
@@ -275,6 +302,34 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSize.sm,
     marginBottom: spacing.lg,
+  },
+  heroCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.lg,
+    backgroundColor: colors.primary,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.xl,
+    overflow: "hidden",
+  },
+  heroIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.full,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroTitle: { color: "#fff", fontSize: fontSize.lg, fontWeight: "800" },
+  heroSub: { color: "rgba(255,255,255,0.85)", fontSize: fontSize.xs, marginTop: 2 },
+  heroArrow: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.full,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
   },
   kpiGrid: {
     flexDirection: "row",
