@@ -147,14 +147,6 @@ export default function LoginScreen() {
             </>
           )}
         </TouchableOpacity>
-
-        <View style={styles.hintBox}>
-          <Ionicons name="key-outline" size={14} color={colors.accent} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.hintTitle}>Credenciales de prueba</Text>
-            <Text style={styles.hintText}>admin@mvg.cl · Admin123!</Text>
-          </View>
-        </View>
       </View>
 
       <Text style={styles.footer}>
