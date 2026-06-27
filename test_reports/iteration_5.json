@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 5 testing for the suministros module changes: SEED_BODEGAS expanded from 1 → 20 (idempotent upsert), dynamic email subject in create_solicitud/reenviar_solicitud (with Región + Ciudad), and the new materials picker inside the pin-pad evidence FormSheet on (tecnico)/ordenes/[id].tsx. BACKEND: 13/13 NEW iter5 pytest passing + 28/28 iter4 regression still green = 41/41 total. Real Resend sends confirmed: backend log shows '[Email:sent] id=75a0a15b-...' and additional ids for our test traffic (mode='sent', recipient=ed0.2580@gmail.com, account-owner email per spec). 20 bodegas seeded exactly: Iquique, Antofagasta, Calama, Copiapó, La Serena, Viña del Mar, Rancagua, Talca, Concepción, Los Ángeles, Temuco, Puerto Montt, Osorno, Castro, Coyhaique, Punta Arenas, Santiago, Valdivia, Arica, Chillán — each with the correct region. No duplicates. build_supply_email_html now correctly renders 'VIII Región' + 'Concepción' in both HTML and text. FRONTEND mobile (390x844): logged in as freshly seeded tecnico → navigated to /ordenes/{id} → tapped 'Tomar foto' → evidence FormSheet opens → 'Materiales utilizados' section + sub-text 'Se descontarán automáticamente de tu stock' + 'Agregar' button (data-testid=add-material-btn) all visible → tapped Agregar → mat-picker-sheet opens showing SKU 5143019 with stock badge 5 → tapped the row → row added to main sheet showing 'VX520 TRIO 3G CTLS B2B 26.10 · Stock disponible: 5' with qty default 1 → tapped mat-plus-5143019 twice → qty = 3. Then completed evidence PATCH (200) + consumo POST (201) — backend returned nuevo_stock=2 and /tecnico/inventario then returns cantidad=2 (5−3) confirming end-to-end stock decrement. The nested FormSheet (picker inside evidence) renders correctly on web preview as two stacked modals. Dynamic-subject path is exercised by the create_solicitud HTTP 201 path; full Resend send (mode='sent', UUID id) verified for the Concepción técnico — meaning the build_router code-path that constructs 'Solicitud de suministros - Técnico Carlos Concepcionino - Región VIII Región - Ciudad Concepción' executed end-to-end without error.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_suministros_iter5.py",
+    "/app/backend/tests/test_suministros.py",
+    "/app/test_reports/pytest/pytest_iter5.xml"
+  ],
+  "action_items": [
+    "No changes required from main agent. Everything in the iteration 5 spec works as described.",
+    "(Optional / cosmetic) The 'shadow*' style props deprecated warning is still emitted by the RN-web layer on every screen — pre-existing across the app, not caused by this iteration."
+  ],
+  "critical_code_review_comments": [
+    "suministros_module.py grew to ~717 lines (was 676). It is now over the 700-line guideline. Consider splitting (productos.py / bodegas.py / solicitudes.py / inventario.py / consumos.py).",
+    "Notification block in create_solicitud (~lines 350-435) and reenviar_solicitud (~lines 480-555) still duplicate the html/text build + send_email + WA loop. Extract into a private helper _send_notifications(sol, tec, cfg, *, reenvio=False) to DRY ~80 lines. (Already flagged in iter4, still applies.)",
+    "build_supply_email_html signature change: items is now keyword-only with default []. This is backward-compatible for current callers but worth noting in a CHANGELOG since it's a public-ish builder.",
+    "Idempotent bodega upsert in init_suministros uses a loop with find_one + insert_one per bodega — fine for 20 rows. If this grows past ~100, switch to a single bulk_write with UpdateOne(..., upsert=True) for performance.",
+    "POST /api/tecnico/consumos still does NOT verify orden_id exists. Confirmed in code review — same finding as iter4; main agent acknowledged. Document as intentional or add validation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_suministros_iter5.py (new — 13 tests)"
+  ],
+  "success_rate": {"backend": "100% (41/41 — 13 new iter5 + 28 iter4 regression)", "frontend": "100% (login + materials picker + plus/minus controls + end-to-end consumo decrement all verified on 390x844)"},
+  "seed_data_creation": "Created on backend (via API): (a) tecnico TEST_uitec5_2b3e33@mvg.cl password=Tec1234! with bodega_id=Concepción (id=858490f1-62be-4364-9664-566636a6be8f), (b) 5 unidades de SKU 5143019 en su inventario, (c) directly inserted via motor a test orden (id=b56a85dd-5bfc-4647-838e-93fc129eb085) con 1 pin pad (id=05405fb7-17a7-4a8c-9565-85fdac876da9), (d) several Concepción técnicos (TEST_contec_*) via the iter5 pytest fixture. Also several solicitudes were created in the iter5 test run (estado='pendiente' or 'atendida') — main agent can clean these up if desired but they don't interfere with future tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 5 tests: /app/backend/tests/test_suministros_iter5.py (13 tests, ~3s) cover bodegas-20 seed + region propagation + dynamic email subject + reenviar + consumo regression. They rely on conftest.py admin_token. The Resend account-owner email is 'ed0.2580@gmail.com' — Resend ONLY accepts that exact 'to' for the onboarding@resend.dev sender. If you change emails_destino to anything else, expect mode='error' status 403 with body 'You can only send testing emails to your own email address'. The dynamic subject format produced by the code is: 'Solicitud de suministros - Técnico {nombre} {apellidos} - Región {region} - Ciudad {bodega}' (with '(reenvío)' inserted after 'suministros' for the reenviar endpoint). build_supply_email_html now takes items as keyword arg with default []. The materials picker is a nested FormSheet (data-testid=mat-picker-sheet) shown over the evidence FormSheet. testIDs: add-material-btn, mat-plus-{sku}, mat-minus-{sku}, mat-remove-{sku}. localStorage keys in the frontend are 'mvg_user' and 'mvg_token' (token value is JSON-string-quoted — strip the outer quotes before using).",
+  "rca_of_issue": "No new bugs found in iteration 5."
+}

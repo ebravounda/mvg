@@ -73,7 +73,8 @@ def build_supply_email_html(
     tecnico_email: str,
     tecnico_telefono: str,
     bodega: str,
-    items: list[dict],
+    region: str = "",
+    items: list[dict] = None,
     notas: Optional[str] = None,
     urgencia: str = "normal",
     fecha: str = "",
@@ -84,6 +85,7 @@ def build_supply_email_html(
     """
     items_rows = ""
     items_text = ""
+    items = items or []
     for it in items:
         items_rows += f"""
         <tr style="border-bottom:1px solid #e2e8f0;">
@@ -125,16 +127,20 @@ def build_supply_email_html(
               <td style="padding:10px 14px;color:#0f172a;font-size:14px;">{tecnico_nombre}</td>
             </tr>
             <tr>
+              <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;border-top:1px solid #e2e8f0;">REGIÓN</td>
+              <td style="padding:10px 14px;color:#0f172a;font-size:14px;border-top:1px solid #e2e8f0;">{region or '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;border-top:1px solid #e2e8f0;">CIUDAD / BODEGA</td>
+              <td style="padding:10px 14px;color:#0f172a;font-size:14px;border-top:1px solid #e2e8f0;">{bodega or '—'}</td>
+            </tr>
+            <tr>
               <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;border-top:1px solid #e2e8f0;">EMAIL</td>
               <td style="padding:10px 14px;color:#0f172a;font-size:14px;border-top:1px solid #e2e8f0;">{tecnico_email}</td>
             </tr>
             <tr>
               <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;border-top:1px solid #e2e8f0;">TELÉFONO</td>
               <td style="padding:10px 14px;color:#0f172a;font-size:14px;border-top:1px solid #e2e8f0;">{tecnico_telefono or '—'}</td>
-            </tr>
-            <tr>
-              <td style="padding:10px 14px;color:#64748b;font-size:12px;font-weight:600;border-top:1px solid #e2e8f0;">BODEGA</td>
-              <td style="padding:10px 14px;color:#0f172a;font-size:14px;border-top:1px solid #e2e8f0;">{bodega or '—'}</td>
             </tr>
           </table>
 
@@ -167,9 +173,10 @@ Fecha: {fecha}
 Urgencia: {urgencia.upper()}
 
 TÉCNICO: {tecnico_nombre}
+Región: {region or '—'}
+Ciudad/Bodega: {bodega or '—'}
 Email: {tecnico_email}
 Teléfono: {tecnico_telefono or '—'}
-Bodega: {bodega or '—'}
 
 PRODUCTOS SOLICITADOS ({len(items)}):
 {items_text}

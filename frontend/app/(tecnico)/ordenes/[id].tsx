@@ -37,10 +37,22 @@ export default function TecnicoOrdenDetalle() {
   const [foto, setFoto] = useState<string | null>(null);
   const [notas, setNotas] = useState("");
 
+  // Materials used per pin-pad evidence
+  const [stock, setStock] = useState<any[]>([]);
+  const [materialesUsados, setMaterialesUsados] = useState<
+    { sku: string; descripcion: string; cantidad: number; max: number }[]
+  >([]);
+  const [matPickerOpen, setMatPickerOpen] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const r = await api.get(`/ordenes/${id}`);
       setOrden(r.data);
+      // Load my stock for materials picker
+      try {
+        const s = await api.get("/tecnico/inventario");
+        setStock(s.data);
+      } catch {}
     } catch {
       showToast("Orden no encontrada", "error");
       router.back();
@@ -72,7 +84,35 @@ export default function TecnicoOrdenDetalle() {
     setSelectedPp(pp);
     setFoto(null);
     setNotas("");
+    setMaterialesUsados([]);
     setEvidenceOpen(true);
+  };
+
+  const addMaterial = (s: any) => {
+    setMaterialesUsados((prev) => {
+      const ex = prev.find((p) => p.sku === s.sku);
+      if (ex) return prev; // already added
+      return [
+        ...prev,
+        {
+          sku: s.sku,
+          descripcion: s.descripcion || s.producto?.descripcion || "",
+          cantidad: 1,
+          max: s.cantidad,
+        },
+      ];
+    });
+    setMatPickerOpen(false);
+  };
+
+  const updateMaterial = (sku: string, qty: number) => {
+    setMaterialesUsados((prev) =>
+      prev.map((m) => (m.sku === sku ? { ...m, cantidad: Math.max(1, qty) } : m))
+    );
+  };
+
+  const removeMaterial = (sku: string) => {
+    setMaterialesUsados((prev) => prev.filter((m) => m.sku !== sku));
   };
 
   const ensurePerm = async (
@@ -145,6 +185,27 @@ export default function TecnicoOrdenDetalle() {
         { evidencia_base64: foto, notas }
       );
       setOrden(r.data);
+
+      // Register material consumption (deduct from stock) if any materials selected
+      if (materialesUsados.length > 0) {
+        try {
+          await api.post("/tecnico/consumos", {
+            orden_id: id,
+            pin_pad_idx: undefined,
+            items: materialesUsados.map((m) => ({
+              sku: m.sku,
+              cantidad: m.cantidad,
+            })),
+          });
+          // refresh stock
+          const ns = await api.get("/tecnico/inventario");
+          setStock(ns.data);
+        } catch (e: any) {
+          console.log("consumo error", e);
+          showToast("Aviso: error registrando consumo de materiales", "info");
+        }
+      }
+
       const stillPending = (r.data.pin_pads || []).filter(
         (p: any) => !p.completed
       ).length;
@@ -419,6 +480,68 @@ export default function TecnicoOrdenDetalle() {
           />
         </View>
 
+        {/* Materials used */}
+        <View style={{ gap: 8 }}>
+          <View style={styles.matHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldLabel}>Materiales utilizados</Text>
+              <Text style={styles.matSub}>
+                Se descontarán automáticamente de tu stock
+              </Text>
+            </View>
+            <TouchableOpacity
+              testID="add-material-btn"
+              onPress={() => setMatPickerOpen(true)}
+              style={styles.matAdd}
+              disabled={stock.length === 0}
+            >
+              <Ionicons name="add" size={14} color="#fff" />
+              <Text style={styles.matAddText}>Agregar</Text>
+            </TouchableOpacity>
+          </View>
+          {stock.length === 0 && (
+            <Text style={styles.matEmpty}>
+              No tienes stock asignado. Solicita suministros desde la pestaña
+              "Suministros".
+            </Text>
+          )}
+          {materialesUsados.map((m) => (
+            <View key={m.sku} style={styles.matRow} testID={`mat-row-${m.sku}`}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.matSku}>SKU {m.sku}</Text>
+                <Text style={styles.matDesc} numberOfLines={1}>
+                  {m.descripcion}
+                </Text>
+                <Text style={styles.matStock}>Stock disponible: {m.max}</Text>
+              </View>
+              <View style={styles.matQtyBox}>
+                <TouchableOpacity
+                  testID={`mat-minus-${m.sku}`}
+                  onPress={() => updateMaterial(m.sku, m.cantidad - 1)}
+                  style={styles.matQtyBtn}
+                >
+                  <Ionicons name="remove" size={12} color={colors.textMain} />
+                </TouchableOpacity>
+                <Text style={styles.matQtyValue}>{m.cantidad}</Text>
+                <TouchableOpacity
+                  testID={`mat-plus-${m.sku}`}
+                  onPress={() => updateMaterial(m.sku, m.cantidad + 1)}
+                  style={styles.matQtyBtn}
+                >
+                  <Ionicons name="add" size={12} color={colors.textMain} />
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                testID={`mat-remove-${m.sku}`}
+                onPress={() => removeMaterial(m.sku)}
+                style={styles.matDel}
+              >
+                <Ionicons name="trash-outline" size={14} color={colors.danger} />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+
         <Btn
           title="Confirmar pin pad"
           onPress={confirmarPp}
@@ -428,6 +551,43 @@ export default function TecnicoOrdenDetalle() {
           testID="pp-confirmar"
           icon={<Ionicons name="checkmark" size={18} color="#fff" />}
         />
+      </FormSheet>
+
+      {/* Materials picker - opens from inside evidence sheet */}
+      <FormSheet
+        visible={matPickerOpen}
+        onClose={() => setMatPickerOpen(false)}
+        title="Selecciona material"
+        testID="mat-picker-sheet"
+      >
+        {stock.length === 0 ? (
+          <Text style={styles.matEmpty}>
+            No tienes stock asignado. Solicita suministros desde la pestaña
+            "Suministros".
+          </Text>
+        ) : (
+          stock
+            .filter((s) => !materialesUsados.find((m) => m.sku === s.sku))
+            .map((s) => (
+              <TouchableOpacity
+                key={s.id}
+                testID={`mat-pick-${s.sku}`}
+                onPress={() => addMaterial(s)}
+                style={styles.matPickRow}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.matSku}>SKU {s.sku}</Text>
+                  <Text style={styles.matDesc} numberOfLines={1}>
+                    {s.descripcion}
+                  </Text>
+                </View>
+                <View style={styles.matStockBadge}>
+                  <Text style={styles.matStockBadgeText}>{s.cantidad}</Text>
+                </View>
+                <Ionicons name="add-circle" size={22} color={colors.primary} />
+              </TouchableOpacity>
+            ))
+        )}
       </FormSheet>
 
       <FormSheet
@@ -671,4 +831,102 @@ const styles = StyleSheet.create({
   },
   pickerTitle: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
   pickerSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+
+  // Materials
+  matHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  matSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+  matAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+  },
+  matAddText: { color: "#fff", fontWeight: "700", fontSize: fontSize.sm },
+  matEmpty: {
+    color: colors.textMuted,
+    fontSize: fontSize.xs,
+    fontStyle: "italic",
+    padding: spacing.sm,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  matRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
+  matSku: {
+    color: colors.accent,
+    fontWeight: "700",
+    fontSize: fontSize.xs,
+    fontFamily: "monospace" as any,
+  },
+  matDesc: { color: colors.textMain, fontSize: fontSize.sm, marginTop: 2 },
+  matStock: { color: colors.textMuted, fontSize: 10, marginTop: 2 },
+  matQtyBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 3,
+  },
+  matQtyBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceAlt,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  matQtyValue: {
+    color: colors.textMain,
+    fontWeight: "800",
+    fontSize: fontSize.sm,
+    minWidth: 16,
+    textAlign: "center",
+  },
+  matDel: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.md,
+    backgroundColor: `${colors.danger}11`,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  matPickRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  matStockBadge: {
+    backgroundColor: `${colors.completed}1a`,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    minWidth: 32,
+    alignItems: "center",
+  },
+  matStockBadgeText: { color: colors.completed, fontWeight: "800", fontSize: fontSize.xs },
 });

@@ -108,7 +108,26 @@ SEED_PRODUCTOS = [
 ]
 
 SEED_BODEGAS = [
+    {"nombre": "Iquique", "region": "I Región"},
+    {"nombre": "Antofagasta", "region": "II Región"},
+    {"nombre": "Calama", "region": "II Región"},
+    {"nombre": "Copiapó", "region": "III Región"},
+    {"nombre": "La Serena", "region": "IV Región"},
+    {"nombre": "Viña del Mar", "region": "V Región"},
+    {"nombre": "Rancagua", "region": "VI Región"},
+    {"nombre": "Talca", "region": "VII Región"},
+    {"nombre": "Concepción", "region": "VIII Región"},
+    {"nombre": "Los Ángeles", "region": "VIII Región"},
+    {"nombre": "Temuco", "region": "IX Región"},
+    {"nombre": "Puerto Montt", "region": "X Región"},
+    {"nombre": "Osorno", "region": "X Región"},
+    {"nombre": "Castro", "region": "X Región"},
+    {"nombre": "Coyhaique", "region": "XI Región"},
+    {"nombre": "Punta Arenas", "region": "XII Región"},
     {"nombre": "Santiago", "region": "Región Metropolitana"},
+    {"nombre": "Valdivia", "region": "XIV Región"},
+    {"nombre": "Arica", "region": "XV Región"},
+    {"nombre": "Chillán", "region": "XVI Región"},
 ]
 
 DEFAULT_CONFIG = {
@@ -136,8 +155,10 @@ async def init_suministros(db) -> None:
             })
         logger.info("[Suministros] Seeded %d productos", len(SEED_PRODUCTOS))
 
-    if await bodegas_col.count_documents({}) == 0:
-        for b in SEED_BODEGAS:
+    # Bodegas: upsert by name so re-runs add missing ones without dupes
+    for b in SEED_BODEGAS:
+        existing = await bodegas_col.find_one({"nombre": b["nombre"]})
+        if not existing:
             await bodegas_col.insert_one({
                 "id": str(uuid.uuid4()),
                 "nombre": b["nombre"],
@@ -145,7 +166,7 @@ async def init_suministros(db) -> None:
                 "direccion": None,
                 "created_at": now_iso(),
             })
-        logger.info("[Suministros] Seeded %d bodegas", len(SEED_BODEGAS))
+    logger.info("[Suministros] Bodegas synced (%d total)", len(SEED_BODEGAS))
 
     if await config_col.count_documents({}) == 0:
         await config_col.insert_one({"_id": "singleton", **DEFAULT_CONFIG})
@@ -336,6 +357,7 @@ def build_router(db, require_admin, require_user):
 
         nombre_completo = f"{current.get('nombre', '')} {current.get('apellidos', '')}".strip()
         bodega_label = bodega_doc.get("nombre") if bodega_doc else "Sin bodega"
+        region_label = bodega_doc.get("region") if bodega_doc else ""
         try:
             fecha_legible = datetime.fromisoformat(sol["fecha"]).strftime(
                 "%d-%m-%Y %H:%M"
@@ -348,17 +370,26 @@ def build_router(db, require_admin, require_user):
             tecnico_email=current.get("email", ""),
             tecnico_telefono=current.get("telefono", ""),
             bodega=bodega_label,
+            region=region_label,
             items=sol["items"],
             notas=payload.notas,
             urgencia=payload.urgencia,
             fecha=fecha_legible,
         )
 
+        # Dynamic subject: "Solicitud de suministros - Técnico X - Región X - Ciudad X"
+        subject_parts = [f"Solicitud de suministros - Técnico {nombre_completo or 'sin nombre'}"]
+        if region_label:
+            subject_parts.append(f"Región {region_label}")
+        if bodega_label and bodega_label != "Sin bodega":
+            subject_parts.append(f"Ciudad {bodega_label}")
+        email_subject = " - ".join(subject_parts)
+
         email_result = None
         if cfg.get("emails_destino"):
             email_result = await send_email(
                 to=cfg["emails_destino"],
-                subject="Solicitud de suministros empresa MVG",
+                subject=email_subject,
                 html=html,
                 text=text,
                 from_email=cfg.get("from_email"),
@@ -378,7 +409,8 @@ def build_router(db, require_admin, require_user):
                 f"📦 *Solicitud de suministros MVG*\n\n"
                 f"👤 Técnico: *{nombre_completo}*\n"
                 f"📞 {current.get('telefono', '—')}\n"
-                f"🏪 Bodega: {bodega_label}\n"
+                f"📍 Región: {region_label or '—'}\n"
+                f"🏪 Ciudad/Bodega: {bodega_label}\n"
                 f"🚩 Urgencia: *{payload.urgencia.upper()}*\n"
                 f"📅 {fecha_legible}\n\n"
                 f"*Productos solicitados:*\n{items_lines}"
@@ -463,6 +495,7 @@ def build_router(db, require_admin, require_user):
         cfg = await get_config(db)
         nombre_completo = f"{tec.get('nombre','')} {tec.get('apellidos','')}".strip()
         bodega_label = bodega_doc.get("nombre") if bodega_doc else "Sin bodega"
+        region_label = bodega_doc.get("region") if bodega_doc else ""
         try:
             fecha_legible = datetime.fromisoformat(sol["fecha"]).strftime(
                 "%d-%m-%Y %H:%M"
@@ -474,16 +507,23 @@ def build_router(db, require_admin, require_user):
             tecnico_email=tec.get("email", ""),
             tecnico_telefono=tec.get("telefono", ""),
             bodega=bodega_label,
+            region=region_label,
             items=sol["items"],
             notas=sol.get("notas"),
             urgencia=sol.get("urgencia", "normal"),
             fecha=fecha_legible,
         )
+        subject_parts = [f"Solicitud de suministros (reenvío) - Técnico {nombre_completo or 'sin nombre'}"]
+        if region_label:
+            subject_parts.append(f"Región {region_label}")
+        if bodega_label and bodega_label != "Sin bodega":
+            subject_parts.append(f"Ciudad {bodega_label}")
+        email_subject = " - ".join(subject_parts)
         email_result = None
         if cfg.get("emails_destino"):
             email_result = await send_email(
                 to=cfg["emails_destino"],
-                subject="Solicitud de suministros empresa MVG (reenvío)",
+                subject=email_subject,
                 html=html,
                 text=text,
                 from_email=cfg.get("from_email"),
