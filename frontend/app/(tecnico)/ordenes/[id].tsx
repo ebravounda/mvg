@@ -8,7 +8,6 @@ import {
   Image,
   TouchableOpacity,
   TextInput,
-  Platform,
   Alert,
   Linking,
 } from "react-native";
@@ -19,6 +18,7 @@ import * as ImagePicker from "expo-image-picker";
 import { api } from "@/src/api/client";
 import { StickyHeader } from "@/src/components/StickyHeader";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
+import { DeadlineBadge } from "@/src/components/DeadlineBadge";
 import { Btn } from "@/src/components/Form";
 import { FormSheet } from "@/src/components/FormSheet";
 import { showToast } from "@/src/components/Toast";
@@ -31,8 +31,9 @@ export default function TecnicoOrdenDetalle() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const [finalizarOpen, setFinalizarOpen] = useState(false);
+  const [selectedPp, setSelectedPp] = useState<any>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [foto, setFoto] = useState<string | null>(null);
   const [notas, setNotas] = useState("");
 
@@ -65,6 +66,13 @@ export default function TecnicoOrdenDetalle() {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const openPpEvidence = (pp: any) => {
+    setSelectedPp(pp);
+    setFoto(null);
+    setNotas("");
+    setEvidenceOpen(true);
   };
 
   const ensurePerm = async (
@@ -102,10 +110,7 @@ export default function TecnicoOrdenDetalle() {
     });
     if (!res.canceled && res.assets[0]) {
       const a = res.assets[0];
-      const uri = a.base64
-        ? `data:image/jpeg;base64,${a.base64}`
-        : a.uri;
-      setFoto(uri);
+      setFoto(a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri);
     }
   };
 
@@ -124,34 +129,51 @@ export default function TecnicoOrdenDetalle() {
     });
     if (!res.canceled && res.assets[0]) {
       const a = res.assets[0];
-      const uri = a.base64
-        ? `data:image/jpeg;base64,${a.base64}`
-        : a.uri;
-      setFoto(uri);
+      setFoto(a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri);
     }
   };
 
-  const finalizar = async () => {
-    if (!foto) {
+  const confirmarPp = async () => {
+    if (!foto || !selectedPp) {
       showToast("Adjunta una foto de evidencia", "error");
       return;
     }
     setActionLoading(true);
     try {
-      await api.patch(`/tecnico/ordenes/${id}/finalizar`, {
-        evidencia_base64: foto,
-        notas,
-      });
-      showToast("Orden finalizada ✓", "success");
-      setFinalizarOpen(false);
+      const r = await api.patch(
+        `/tecnico/ordenes/${id}/pinpad/${selectedPp.id}`,
+        { evidencia_base64: foto, notas }
+      );
+      setOrden(r.data);
+      const stillPending = (r.data.pin_pads || []).filter(
+        (p: any) => !p.completed
+      ).length;
+      if (stillPending === 0) {
+        showToast("¡Orden completada! Todas las pin pads actualizadas ✓", "success");
+      } else {
+        showToast(
+          `Pin pad actualizado · Quedan ${stillPending}`,
+          "success"
+        );
+      }
+      setEvidenceOpen(false);
+      setSelectedPp(null);
       setFoto(null);
       setNotas("");
-      load();
     } catch (e: any) {
       showToast(e?.response?.data?.detail || "Error", "error");
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const openMaps = () => {
+    const dir = encodeURIComponent(orden?.sucursal?.direccion || "");
+    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${dir}`);
+  };
+  const openWaze = () => {
+    const dir = encodeURIComponent(orden?.sucursal?.direccion || "");
+    Linking.openURL(`https://waze.com/ul?q=${dir}`);
   };
 
   if (loading || !orden) {
@@ -165,6 +187,11 @@ export default function TecnicoOrdenDetalle() {
     );
   }
 
+  const pinPads = orden.pin_pads || [];
+  const completedCount = pinPads.filter((p: any) => p.completed).length;
+  const progressPct =
+    pinPads.length > 0 ? (completedCount / pinPads.length) * 100 : 0;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StickyHeader title={orden.numero} showBack />
@@ -174,68 +201,66 @@ export default function TecnicoOrdenDetalle() {
           <View style={styles.badges}>
             <StatusBadge status={orden.estado} />
             <PriorityBadge priority={orden.prioridad} />
+            <DeadlineBadge fechaLimite={orden.fecha_limite} size="md" />
           </View>
           <Text style={styles.titulo}>{orden.titulo}</Text>
         </View>
 
-        <Section title="Cliente / Sucursal">
-          <Row
-            icon="business-outline"
-            label="Cliente"
-            value={orden.cliente?.nombre}
-          />
-          <Row
-            icon="location-outline"
-            label="Sucursal"
-            value={orden.sucursal?.nombre}
-          />
+        <View style={styles.ccBox}>
+          <View style={styles.ccTop}>
+            <Ionicons name="pricetag" size={20} color={colors.accent} />
+            <Text style={styles.ccLabel}>Código de comercio</Text>
+            <Text style={styles.ccValue}>
+              {orden.sucursal?.codigo_comercio || "—"}
+            </Text>
+          </View>
           {orden.sucursal?.direccion && (
-            <Row
-              icon="map-outline"
-              label="Dirección"
-              value={orden.sucursal.direccion}
-            />
+            <Text style={styles.ccDir}>{orden.sucursal.direccion}</Text>
           )}
-          {orden.sucursal?.encargado && (
-            <Row
-              icon="person-outline"
-              label="Contacto"
-              value={orden.sucursal.encargado}
-            />
+          {(orden.sucursal?.comuna || orden.sucursal?.region) && (
+            <Text style={styles.ccMeta}>
+              {orden.sucursal?.comuna || ""}
+              {orden.sucursal?.region ? ` · Región ${orden.sucursal.region}` : ""}
+            </Text>
           )}
-          {orden.sucursal?.telefono && (
-            <Row
-              icon="call-outline"
-              label="Teléfono"
-              value={orden.sucursal.telefono}
+          <View style={styles.mapBtns}>
+            <TouchableOpacity
+              testID="tec-open-waze"
+              onPress={openWaze}
+              style={[styles.mapBtn, { backgroundColor: "#33CCFF" }]}
+            >
+              <Ionicons name="navigate" size={16} color="#fff" />
+              <Text style={styles.mapBtnText}>Waze</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              testID="tec-open-maps"
+              onPress={openMaps}
+              style={[styles.mapBtn, { backgroundColor: "#4285F4" }]}
+            >
+              <Ionicons name="map" size={16} color="#fff" />
+              <Text style={styles.mapBtnText}>Google Maps</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.progressBox}>
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressTitle}>
+              Pin Pads ({completedCount}/{pinPads.length})
+            </Text>
+            <Text style={styles.progressPct}>{Math.round(progressPct)}%</Text>
+          </View>
+          <View style={styles.progressBar}>
+            <View
+              style={[
+                styles.progressFill,
+                { width: `${progressPct}%` },
+              ]}
             />
-          )}
-        </Section>
+          </View>
+        </View>
 
-        <Section title="Descripción del trabajo">
-          <Text style={styles.descripcion}>{orden.descripcion}</Text>
-        </Section>
-
-        {orden.estado === "finalizada" && (
-          <Section title="Evidencia enviada">
-            {orden.evidencia_base64 && (
-              <Image
-                source={{ uri: orden.evidencia_base64 }}
-                style={styles.evidencia}
-                resizeMode="cover"
-                testID="tec-evidencia-img"
-              />
-            )}
-            {orden.notas_tecnico ? (
-              <View style={styles.notesBox}>
-                <Text style={styles.notesLabel}>Notas</Text>
-                <Text style={styles.notes}>{orden.notas_tecnico}</Text>
-              </View>
-            ) : null}
-          </Section>
-        )}
-
-        {orden.estado === "pendiente" && (
+        {orden.estado === "pendiente" && pinPads.length > 0 && (
           <Btn
             title="Iniciar trabajo"
             onPress={iniciar}
@@ -245,48 +270,131 @@ export default function TecnicoOrdenDetalle() {
           />
         )}
 
-        {orden.estado === "en_progreso" && (
-          <Btn
-            title="Finalizar con evidencia"
-            variant="accent"
-            onPress={() => setFinalizarOpen(true)}
-            testID="finalizar-orden-btn"
-            icon={<Ionicons name="camera" size={18} color="#fff" />}
-          />
+        {pinPads.length === 0 && (
+          <View style={styles.empty}>
+            <Text style={styles.emptyTxt}>
+              Esta orden no tiene pin pads registrados.
+            </Text>
+          </View>
         )}
+
+        {pinPads.map((pp: any, idx: number) => (
+          <View
+            key={pp.id}
+            style={[
+              styles.ppCard,
+              pp.completed && { borderColor: colors.completed },
+            ]}
+            testID={`pinpad-${pp.id}`}
+          >
+            <View style={styles.ppHeader}>
+              <View style={styles.ppNumber}>
+                <Text style={styles.ppNumberText}>{idx + 1}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ppTitle}>
+                  {pp.ddll || `Pin Pad ${idx + 1}`}
+                </Text>
+                <Text style={styles.ppSub}>
+                  Serie: {pp.serie || "—"}
+                  {pp.modelo ? ` · Modelo: ${pp.modelo}` : ""}
+                </Text>
+              </View>
+              {pp.completed ? (
+                <View style={styles.ppDone}>
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={28}
+                    color={colors.completed}
+                  />
+                </View>
+              ) : (
+                <View style={styles.ppPending}>
+                  <Ionicons
+                    name="ellipse-outline"
+                    size={28}
+                    color={colors.textMuted}
+                  />
+                </View>
+              )}
+            </View>
+
+            {pp.completed && pp.evidencia_base64 && (
+              <Image
+                source={{ uri: pp.evidencia_base64 }}
+                style={styles.ppPhoto}
+                resizeMode="cover"
+              />
+            )}
+            {pp.completed && pp.notas ? (
+              <Text style={styles.ppNotas}>📝 {pp.notas}</Text>
+            ) : null}
+            {pp.completed && pp.completed_at ? (
+              <Text style={styles.ppDate}>
+                Actualizado:{" "}
+                {new Date(pp.completed_at).toLocaleString("es-CL")}
+              </Text>
+            ) : null}
+
+            {orden.estado !== "finalizada" && (
+              <TouchableOpacity
+                testID={`pp-evidencia-${pp.id}`}
+                style={[
+                  styles.ppBtn,
+                  pp.completed && { backgroundColor: colors.surfaceAlt },
+                ]}
+                onPress={() => openPpEvidence(pp)}
+              >
+                <Ionicons
+                  name={pp.completed ? "refresh" : "camera"}
+                  size={16}
+                  color={pp.completed ? colors.textMuted : "#fff"}
+                />
+                <Text
+                  style={[
+                    styles.ppBtnText,
+                    pp.completed && { color: colors.textMuted },
+                  ]}
+                >
+                  {pp.completed ? "Volver a tomar foto" : "Tomar foto"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ))}
       </ScrollView>
 
-      {/* Finalizar sheet */}
+      {/* Evidence sheet */}
       <FormSheet
-        visible={finalizarOpen}
-        onClose={() => setFinalizarOpen(false)}
-        title="Finalizar trabajo"
-        testID="finalizar-sheet"
+        visible={evidenceOpen}
+        onClose={() => setEvidenceOpen(false)}
+        title={`Pin Pad ${selectedPp?.ddll || ""}`}
+        testID="evidencia-sheet"
       >
         <Text style={styles.helpText}>
-          Adjunta una foto de evidencia del trabajo realizado y notas opcionales.
+          Adjunta foto del trabajo realizado en este pin pad.
         </Text>
 
         {foto ? (
-          <View style={styles.photoBox}>
+          <View style={{ gap: spacing.sm }}>
             <Image
               source={{ uri: foto }}
-              style={styles.photoPreview}
+              style={styles.previewPhoto}
               resizeMode="cover"
-              testID="evidencia-preview"
+              testID="pp-preview"
             />
             <TouchableOpacity
-              testID="cambiar-foto-btn"
-              style={styles.photoChange}
+              testID="cambiar-foto"
+              style={styles.changeBtn}
               onPress={() => setPickerOpen(true)}
             >
               <Ionicons name="refresh" size={16} color="#fff" />
-              <Text style={styles.photoChangeText}>Cambiar foto</Text>
+              <Text style={styles.changeBtnText}>Cambiar foto</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <TouchableOpacity
-            testID="agregar-foto-btn"
+            testID="agregar-foto"
             style={styles.photoEmpty}
             onPress={() => setPickerOpen(true)}
           >
@@ -294,19 +402,17 @@ export default function TecnicoOrdenDetalle() {
               <Ionicons name="camera" size={32} color={colors.accent} />
             </View>
             <Text style={styles.photoEmptyTitle}>Agregar foto</Text>
-            <Text style={styles.photoEmptySub}>
-              Toma una foto o elige de tu galería
-            </Text>
+            <Text style={styles.photoEmptySub}>Cámara o galería</Text>
           </TouchableOpacity>
         )}
 
-        <View style={styles.fieldWrap}>
+        <View style={{ gap: 6 }}>
           <Text style={styles.fieldLabel}>Notas (opcional)</Text>
           <TextInput
-            testID="notas-input"
+            testID="pp-notas"
             value={notas}
             onChangeText={setNotas}
-            placeholder="Detalles del trabajo realizado..."
+            placeholder="Detalles del trabajo..."
             placeholderTextColor={colors.textDim}
             style={styles.notesInput}
             multiline
@@ -314,16 +420,16 @@ export default function TecnicoOrdenDetalle() {
         </View>
 
         <Btn
-          title="Confirmar finalización"
-          onPress={finalizar}
+          title="Confirmar pin pad"
+          onPress={confirmarPp}
           loading={actionLoading}
           variant="accent"
-          testID="finalizar-confirmar-btn"
           disabled={!foto}
+          testID="pp-confirmar"
+          icon={<Ionicons name="checkmark" size={18} color="#fff" />}
         />
       </FormSheet>
 
-      {/* Picker sheet */}
       <FormSheet
         visible={pickerOpen}
         onClose={() => setPickerOpen(false)}
@@ -340,9 +446,8 @@ export default function TecnicoOrdenDetalle() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.pickerTitle}>Tomar foto</Text>
-            <Text style={styles.pickerSub}>Usa la cámara del dispositivo</Text>
+            <Text style={styles.pickerSub}>Cámara del dispositivo</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -355,40 +460,13 @@ export default function TecnicoOrdenDetalle() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.pickerTitle}>Elegir de la galería</Text>
-            <Text style={styles.pickerSub}>Selecciona una foto guardada</Text>
+            <Text style={styles.pickerSub}>Foto guardada</Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
         </TouchableOpacity>
       </FormSheet>
     </SafeAreaView>
   );
 }
-
-const Section: React.FC<{ title: string; children: React.ReactNode }> = ({
-  title,
-  children,
-}) => (
-  <View style={styles.section}>
-    <Text style={styles.sectionTitle}>{title}</Text>
-    <View style={styles.sectionBody}>{children}</View>
-  </View>
-);
-
-const Row: React.FC<{ icon: any; label: string; value?: string }> = ({
-  icon,
-  label,
-  value,
-}) => (
-  <View style={styles.detailRow}>
-    <View style={styles.detailIcon}>
-      <Ionicons name={icon} size={16} color={colors.accent} />
-    </View>
-    <View style={{ flex: 1 }}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value || "—"}</Text>
-    </View>
-  </View>
-);
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
@@ -403,65 +481,122 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   numero: { color: colors.accent, fontWeight: "700", fontSize: fontSize.sm },
-  badges: { flexDirection: "row", gap: spacing.sm },
-  titulo: { color: colors.textMain, fontSize: fontSize.xl, fontWeight: "800" },
-  section: {
+  badges: { flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" },
+  titulo: { color: colors.textMain, fontSize: fontSize.lg, fontWeight: "800" },
+
+  ccBox: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
+    padding: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.border,
-    overflow: "hidden",
+    borderColor: colors.accent,
+    gap: 6,
   },
-  sectionTitle: {
+  ccTop: { flexDirection: "row", alignItems: "center", gap: 6 },
+  ccLabel: {
     color: colors.textMuted,
     fontSize: fontSize.xs,
-    fontWeight: "700",
-    letterSpacing: 1,
     textTransform: "uppercase",
+    fontWeight: "700",
+    flex: 1,
+  },
+  ccValue: { color: colors.accent, fontSize: fontSize.xl, fontWeight: "900" },
+  ccDir: { color: colors.textMain, fontSize: fontSize.md, marginTop: 4 },
+  ccMeta: { color: colors.textMuted, fontSize: fontSize.xs },
+  mapBtns: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  mapBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  mapBtnText: { color: "#fff", fontWeight: "700", fontSize: fontSize.sm },
+
+  progressBox: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.sm,
   },
-  sectionBody: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
-    gap: spacing.md,
+  progressHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  detailRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  detailIcon: {
-    width: 32,
-    height: 32,
+  progressTitle: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
+  progressPct: { color: colors.accent, fontSize: fontSize.lg, fontWeight: "900" },
+  progressBar: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.surfaceAlt,
+    overflow: "hidden",
+  },
+  progressFill: { height: "100%", backgroundColor: colors.completed },
+
+  empty: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+  },
+  emptyTxt: { color: colors.textMuted, fontSize: fontSize.sm, textAlign: "center" },
+
+  ppCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.sm,
+  },
+  ppHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  ppNumber: {
+    width: 36,
+    height: 36,
     borderRadius: radius.full,
-    backgroundColor: `${colors.accent}22`,
+    backgroundColor: `${colors.primary}33`,
     alignItems: "center",
     justifyContent: "center",
   },
-  detailLabel: { color: colors.textDim, fontSize: fontSize.xs },
-  detailValue: { color: colors.textMain, fontSize: fontSize.sm, fontWeight: "500" },
-  descripcion: { color: colors.textMain, fontSize: fontSize.md, lineHeight: 22 },
-  evidencia: {
+  ppNumberText: { color: colors.primary, fontWeight: "800", fontSize: fontSize.md },
+  ppTitle: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
+  ppSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+  ppDone: { width: 36, alignItems: "center" },
+  ppPending: { width: 36, alignItems: "center" },
+  ppPhoto: {
     width: "100%",
-    height: 240,
+    height: 180,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
   },
-  notesBox: { marginTop: spacing.md, gap: 6 },
-  notesLabel: {
-    color: colors.textMuted,
-    fontSize: fontSize.xs,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
+  ppNotas: { color: colors.textMain, fontSize: fontSize.sm },
+  ppDate: { color: colors.textMuted, fontSize: fontSize.xs },
+  ppBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    borderRadius: radius.md,
   },
-  notes: { color: colors.textMain, fontSize: fontSize.sm, lineHeight: 20 },
-  helpText: { color: colors.textMuted, fontSize: fontSize.sm, marginBottom: 4 },
-  photoBox: { gap: spacing.sm },
-  photoPreview: {
+  ppBtnText: { color: "#fff", fontWeight: "700", fontSize: fontSize.sm },
+
+  previewPhoto: {
     width: "100%",
     height: 220,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceAlt,
   },
-  photoChange: {
+  changeBtn: {
     flexDirection: "row",
     alignSelf: "center",
     backgroundColor: colors.surfaceAlt,
@@ -473,7 +608,7 @@ const styles = StyleSheet.create({
     gap: 6,
     alignItems: "center",
   },
-  photoChangeText: { color: "#fff", fontWeight: "600", fontSize: fontSize.sm },
+  changeBtnText: { color: "#fff", fontWeight: "600", fontSize: fontSize.sm },
   photoEmpty: {
     borderWidth: 2,
     borderColor: colors.border,
@@ -498,7 +633,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   photoEmptySub: { color: colors.textMuted, fontSize: fontSize.sm },
-  fieldWrap: { gap: 6 },
   fieldLabel: {
     color: colors.textMuted,
     fontSize: fontSize.xs,
@@ -514,9 +648,10 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     color: colors.textMain,
     fontSize: fontSize.md,
-    minHeight: 90,
+    minHeight: 80,
     textAlignVertical: "top",
   },
+  helpText: { color: colors.textMuted, fontSize: fontSize.sm },
   pickerOpt: {
     flexDirection: "row",
     alignItems: "center",

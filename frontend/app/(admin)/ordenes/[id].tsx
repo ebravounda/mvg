@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Image,
   TouchableOpacity,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
@@ -14,7 +15,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { StickyHeader } from "@/src/components/StickyHeader";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
-import { Btn } from "@/src/components/Form";
+import { DeadlineBadge } from "@/src/components/DeadlineBadge";
+import { Btn, Select } from "@/src/components/Form";
+import { FormSheet } from "@/src/components/FormSheet";
 import { showToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fontSize } from "@/src/theme";
 
@@ -23,6 +26,11 @@ export default function OrdenDetalle() {
   const router = useRouter();
   const [orden, setOrden] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+
+  const [asignarOpen, setAsignarOpen] = useState(false);
+  const [tecnicos, setTecnicos] = useState<any[]>([]);
+  const [selectedTec, setSelectedTec] = useState("");
+  const [asignando, setAsignando] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +50,46 @@ export default function OrdenDetalle() {
     }, [load])
   );
 
+  const openAsignar = async () => {
+    setSelectedTec(orden?.tecnico_id || "");
+    setAsignarOpen(true);
+    try {
+      const r = await api.get("/admin/tecnicos");
+      setTecnicos(r.data);
+    } catch {
+      setTecnicos([]);
+    }
+  };
+
+  const onAsignar = async () => {
+    if (!selectedTec) {
+      showToast("Selecciona un técnico", "error");
+      return;
+    }
+    setAsignando(true);
+    try {
+      const r = await api.patch(`/admin/ordenes/${id}/asignar`, {
+        tecnico_id: selectedTec,
+      });
+      const wa = r.data?.whatsapp;
+      if (wa?.mode === "sent") {
+        showToast("Técnico asignado · WhatsApp enviado ✓", "success");
+      } else if (wa?.mode === "fallback_link") {
+        showToast("Técnico asignado · Abre WhatsApp manualmente", "info");
+      } else if (wa?.mode === "no_phone") {
+        showToast("Asignado, pero técnico sin teléfono", "info");
+      } else {
+        showToast("Técnico asignado", "success");
+      }
+      setAsignarOpen(false);
+      load();
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    } finally {
+      setAsignando(false);
+    }
+  };
+
   const onDelete = async () => {
     try {
       await api.delete(`/admin/ordenes/${id}`);
@@ -49,6 +97,54 @@ export default function OrdenDetalle() {
       router.back();
     } catch (e: any) {
       showToast(e?.response?.data?.detail || "Error eliminando", "error");
+    }
+  };
+
+  const openWaze = () => {
+    const dir = encodeURIComponent(orden?.sucursal?.direccion || "");
+    Linking.openURL(`https://waze.com/ul?q=${dir}`);
+  };
+
+  const openMaps = () => {
+    const dir = encodeURIComponent(orden?.sucursal?.direccion || "");
+    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${dir}`);
+  };
+
+  const openWaLink = () => {
+    if (orden?.whatsapp_last?.wa_link) {
+      Linking.openURL(orden.whatsapp_last.wa_link);
+    }
+  };
+
+  const downloadPdf = async () => {
+    try {
+      const token = await (await import("@/src/utils/storage")).storage.secureGet<string>(
+        "mvg_token",
+        ""
+      );
+      const url = `${(await import("@/src/api/client")).API_BASE}/admin/ordenes/${id}/pdf`;
+      const filename = `orden_${orden.numero}.pdf`;
+      if (typeof window !== "undefined" && (window as any).fetch) {
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          showToast("Error al generar PDF", "error");
+          return;
+        }
+        const blob = await res.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast("PDF descargado", "success");
+      } else {
+        Linking.openURL(`${url}?token=${token}`);
+      }
+    } catch (e: any) {
+      showToast(String(e?.message || e), "error");
     }
   };
 
@@ -72,76 +168,162 @@ export default function OrdenDetalle() {
           <View style={styles.badges}>
             <StatusBadge status={orden.estado} />
             <PriorityBadge priority={orden.prioridad} />
+            <DeadlineBadge fechaLimite={orden.fecha_limite} size="md" />
           </View>
           <Text style={styles.titulo}>{orden.titulo}</Text>
         </View>
 
-        <Section title="Cliente">
-          <Row icon="business-outline" label="Nombre" value={orden.cliente?.nombre} />
-          {orden.cliente?.rut && (
-            <Row icon="card-outline" label="RUT" value={orden.cliente.rut} />
-          )}
-          {orden.cliente?.contacto && (
-            <Row
-              icon="person-outline"
-              label="Contacto"
-              value={orden.cliente.contacto}
-            />
-          )}
-          {orden.cliente?.telefono && (
-            <Row
-              icon="call-outline"
-              label="Teléfono"
-              value={orden.cliente.telefono}
-            />
+        <Section title="Equipo">
+          <Row icon="pricetag-outline" label="Código comercio (CC)" value={orden.sucursal?.codigo_comercio} highlight />
+          {orden.pin_pads && orden.pin_pads.length > 0 ? (
+            <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+              <Text style={styles.subTitle}>
+                {orden.pin_pads.length} Pin Pad{orden.pin_pads.length === 1 ? "" : "s"} ·{" "}
+                {orden.pin_pads.filter((p: any) => p.completed).length} actualizado{orden.pin_pads.filter((p: any) => p.completed).length === 1 ? "" : "s"}
+              </Text>
+              {orden.pin_pads.map((pp: any, idx: number) => (
+                <View key={pp.id} style={styles.ppItem} testID={`admin-pp-${pp.id}`}>
+                  <View style={styles.ppItemHead}>
+                    <Text style={styles.ppItemNum}>#{idx + 1}</Text>
+                    {pp.completed ? (
+                      <Ionicons name="checkmark-circle" size={18} color={colors.completed} />
+                    ) : (
+                      <Ionicons name="ellipse-outline" size={18} color={colors.textMuted} />
+                    )}
+                  </View>
+                  <Text style={styles.ppDdll}>DDLL: {pp.ddll || "—"}</Text>
+                  <Text style={styles.ppSerie}>Serie: {pp.serie || "—"}{pp.modelo ? ` · ${pp.modelo}` : ""}</Text>
+                  {pp.completed && pp.completed_at ? (
+                    <Text style={styles.ppMeta}>
+                      ✓ {new Date(pp.completed_at).toLocaleString("es-CL")}
+                    </Text>
+                  ) : null}
+                  {pp.completed && pp.evidencia_base64 ? (
+                    <Image
+                      source={{ uri: pp.evidencia_base64 }}
+                      style={styles.ppThumb}
+                      resizeMode="cover"
+                    />
+                  ) : null}
+                  {pp.notas ? <Text style={styles.ppNotas}>📝 {pp.notas}</Text> : null}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <>
+              <Row icon="barcode-outline" label="Serie" value={orden.serie} />
+              <Row icon="hardware-chip-outline" label="Modelo" value={orden.modelo} />
+              <Row icon="server-outline" label="DDLL" value={orden.ddll} />
+            </>
           )}
         </Section>
 
-        <Section title="Sucursal">
+        <Section title="Ubicación">
+          <Row
+            icon="business-outline"
+            label="Cliente"
+            value={orden.cliente?.nombre_fantasia || orden.cliente?.nombre}
+          />
           <Row
             icon="location-outline"
-            label="Sucursal"
-            value={orden.sucursal?.nombre}
+            label="Dirección"
+            value={orden.sucursal?.direccion}
           />
-          {orden.sucursal?.direccion && (
-            <Row
-              icon="map-outline"
-              label="Dirección"
-              value={orden.sucursal.direccion}
-            />
+          {orden.sucursal?.comuna && (
+            <Row icon="map-outline" label="Comuna" value={orden.sucursal.comuna} />
           )}
-          {orden.sucursal?.encargado && (
-            <Row
-              icon="person-outline"
-              label="Encargado"
-              value={orden.sucursal.encargado}
-            />
+          {orden.sucursal?.region && (
+            <Row icon="globe-outline" label="Región" value={orden.sucursal.region} />
+          )}
+          {orden.sucursal?.direccion && (
+            <View style={styles.mapBtns}>
+              <TouchableOpacity
+                testID="open-waze-btn"
+                style={[styles.mapBtn, { backgroundColor: "#33CCFF" }]}
+                onPress={openWaze}
+              >
+                <Ionicons name="navigate" size={16} color="#fff" />
+                <Text style={styles.mapBtnText}>Waze</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="open-maps-btn"
+                style={[styles.mapBtn, { backgroundColor: "#4285F4" }]}
+                onPress={openMaps}
+              >
+                <Ionicons name="map" size={16} color="#fff" />
+                <Text style={styles.mapBtnText}>Google Maps</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </Section>
 
         <Section title="Técnico asignado">
-          <Row
-            icon="person-circle-outline"
-            label="Nombre"
-            value={
-              orden.tecnico
-                ? `${orden.tecnico.nombre} ${orden.tecnico.apellidos}`
-                : "Sin asignar"
+          {orden.tecnico ? (
+            <>
+              <Row
+                icon="person-circle-outline"
+                label="Nombre"
+                value={`${orden.tecnico.nombre} ${orden.tecnico.apellidos}`}
+              />
+              {orden.tecnico.email && (
+                <Row icon="mail-outline" label="Email" value={orden.tecnico.email} />
+              )}
+              {orden.tecnico.telefono && (
+                <Row
+                  icon="call-outline"
+                  label="Teléfono"
+                  value={orden.tecnico.telefono}
+                />
+              )}
+              {orden.whatsapp_last && (
+                <View style={styles.waBox}>
+                  <Ionicons
+                    name="logo-whatsapp"
+                    size={16}
+                    color={colors.completed}
+                  />
+                  <Text style={styles.waText}>
+                    WhatsApp:{" "}
+                    {orden.whatsapp_last.mode === "sent"
+                      ? "enviado ✓"
+                      : orden.whatsapp_last.mode === "fallback_link"
+                      ? "link disponible"
+                      : orden.whatsapp_last.mode === "no_phone"
+                      ? "sin teléfono"
+                      : "error"}
+                  </Text>
+                  {orden.whatsapp_last.wa_link && (
+                    <TouchableOpacity
+                      testID="abrir-wa-link"
+                      onPress={openWaLink}
+                      style={styles.waLinkBtn}
+                    >
+                      <Text style={styles.waLinkText}>Abrir WhatsApp</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+            </>
+          ) : (
+            <Text style={styles.muted}>Sin técnico asignado</Text>
+          )}
+
+          <Btn
+            title={orden.tecnico ? "Reasignar técnico" : "Asignar técnico"}
+            variant={orden.tecnico ? "outline" : "primary"}
+            onPress={openAsignar}
+            testID="asignar-tecnico-btn"
+            icon={
+              <Ionicons
+                name={orden.tecnico ? "refresh" : "person-add"}
+                size={18}
+                color="#fff"
+              />
             }
           />
-          {orden.tecnico?.email && (
-            <Row icon="mail-outline" label="Email" value={orden.tecnico.email} />
-          )}
-          {orden.tecnico?.telefono && (
-            <Row
-              icon="call-outline"
-              label="Teléfono"
-              value={orden.tecnico.telefono}
-            />
-          )}
         </Section>
 
-        <Section title="Descripción del problema">
+        <Section title="Descripción">
           <Text style={styles.descripcion}>{orden.descripcion}</Text>
         </Section>
 
@@ -188,7 +370,14 @@ export default function OrdenDetalle() {
           </Section>
         )}
 
-        <View style={{ marginTop: spacing.lg }}>
+        <View style={{ marginTop: spacing.lg, gap: spacing.md }}>
+          <Btn
+            title="Descargar PDF"
+            variant="accent"
+            onPress={downloadPdf}
+            testID="descargar-pdf-btn"
+            icon={<Ionicons name="document-text" size={18} color="#fff" />}
+          />
           <Btn
             title="Eliminar orden"
             variant="danger"
@@ -198,6 +387,35 @@ export default function OrdenDetalle() {
           />
         </View>
       </ScrollView>
+
+      <FormSheet
+        visible={asignarOpen}
+        onClose={() => setAsignarOpen(false)}
+        title={orden.tecnico ? "Reasignar técnico" : "Asignar técnico"}
+        testID="asignar-sheet"
+      >
+        <Text style={styles.helpText}>
+          El técnico recibirá una notificación por WhatsApp al teléfono registrado.
+        </Text>
+        <Select
+          label="Técnico"
+          value={selectedTec}
+          onChange={setSelectedTec}
+          options={tecnicos.map((t) => ({
+            label: `${t.nombre} ${t.apellidos} · ${t.telefono || "sin tel"}`,
+            value: t.id,
+          }))}
+          testID="asignar-select"
+        />
+        <Btn
+          title="Asignar y notificar"
+          onPress={onAsignar}
+          loading={asignando}
+          variant="accent"
+          testID="asignar-confirmar"
+          icon={<Ionicons name="logo-whatsapp" size={18} color="#fff" />}
+        />
+      </FormSheet>
     </SafeAreaView>
   );
 }
@@ -212,18 +430,21 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({
   </View>
 );
 
-const Row: React.FC<{ icon: any; label: string; value?: string }> = ({
+const Row: React.FC<{ icon: any; label: string; value?: string; highlight?: boolean }> = ({
   icon,
   label,
   value,
+  highlight,
 }) => (
   <View style={styles.detailRow}>
-    <View style={styles.detailIcon}>
+    <View style={[styles.detailIcon, highlight && { backgroundColor: `${colors.accent}33` }]}>
       <Ionicons name={icon} size={16} color={colors.accent} />
     </View>
     <View style={{ flex: 1 }}>
       <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value || "—"}</Text>
+      <Text style={[styles.detailValue, highlight && { color: colors.accent, fontWeight: "800", fontSize: fontSize.md }]}>
+        {value || "—"}
+      </Text>
     </View>
   </View>
 );
@@ -241,7 +462,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   numero: { color: colors.accent, fontWeight: "700", fontSize: fontSize.sm },
-  badges: { flexDirection: "row", gap: spacing.sm },
+  badges: { flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" },
   titulo: { color: colors.textMain, fontSize: fontSize.xl, fontWeight: "800" },
   section: {
     backgroundColor: colors.surface,
@@ -292,4 +513,63 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   notes: { color: colors.textMain, fontSize: fontSize.sm, lineHeight: 20 },
+  mapBtns: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  mapBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  mapBtnText: { color: "#fff", fontWeight: "700", fontSize: fontSize.sm },
+  waBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    padding: spacing.md,
+    backgroundColor: "rgba(16,185,129,0.1)",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "rgba(16,185,129,0.3)",
+    flexWrap: "wrap",
+  },
+  waText: { color: colors.textMain, fontSize: fontSize.sm, flex: 1 },
+  waLinkBtn: {
+    backgroundColor: colors.completed,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  waLinkText: { color: "#fff", fontSize: fontSize.xs, fontWeight: "700" },
+  helpText: { color: colors.textMuted, fontSize: fontSize.sm },
+  subTitle: {
+    color: colors.accent,
+    fontSize: fontSize.xs,
+    textTransform: "uppercase",
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  ppItem: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  ppItemHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  ppItemNum: { color: colors.textMuted, fontWeight: "700", fontSize: fontSize.xs },
+  ppDdll: { color: colors.textMain, fontWeight: "800", fontSize: fontSize.sm },
+  ppSerie: { color: colors.textMuted, fontSize: fontSize.xs },
+  ppMeta: { color: colors.completed, fontSize: fontSize.xs, fontWeight: "600" },
+  ppNotas: { color: colors.textMuted, fontSize: fontSize.xs, fontStyle: "italic" },
+  ppThumb: {
+    width: "100%",
+    height: 140,
+    borderRadius: radius.sm,
+    marginTop: 4,
+    backgroundColor: colors.surface,
+  },
 });

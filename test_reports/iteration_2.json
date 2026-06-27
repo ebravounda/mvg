@@ -1,0 +1,61 @@
+{
+  "summary": "Iteration 2 backend testing (Excel import + pin pads + PDF + WhatsApp + comercios) completed against the public preview URL. 12/12 pytest tests passed end-to-end: reset → upload BASE_FEMSA_REGIONES.xlsx → 542 ordenes / 3202 pin pads created with 0 errores; admin/comercios returns ~542 comercios with cliente, pin_pads, pin_pads_count, ordenes_count, ordenes_finalizadas; admin/ordenes returns enriched ordenes including pin_pads array (id, serie, modelo, ddll, completed=false, evidencia_base64=null) and sucursal.codigo_comercio; PATCH /admin/ordenes/{id}/asignar returns {orden, whatsapp:{mode:'fallback_link', wa_link:'https://wa.me/...'}} because WHATSAPP_BOT_URL is empty; técnico sees only its own assigned ordenes; pinpad update with empty evidencia → 400, with evidencia → marks pin pad completed and auto-transitions orden pendiente → en_progreso → finalizada (with finalized_at) once all pin pads are done; cross-técnico PATCH on a foreign orden returns 403; técnico hitting upload-excel returns 403; PDF endpoint returns application/pdf with content starting with '%PDF' and >1.5KB. Two persisted clientes (FEMSA group) and ~542 comercios remain in DB after the run (idempotent upsert behavior — clientes_creados/comercios_creados counters can be 0 on re-runs).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/admin/ordenes/upload-excel",
+        "issue": "Upload summary counters (clientes_creados, comercios_creados) only count newly inserted documents. On re-runs after a reset, they can be 0 even when 542 ordenes are created, because clientes/comercios are upserted by (rut, cc). Consider also returning 'clientes_total' and 'comercios_total' for clarity."
+      },
+      {
+        "endpoint": "/api/admin/ordenes/reset",
+        "issue": "Deletes ordenes only, but does NOT delete sucursales/clientes. The review request mentions wiping sucursales directly in mongo if a fully clean state is required. Consider exposing a /reset?deep=true that also wipes derived data (clientes/sucursales) so tests are deterministic."
+      },
+      {
+        "endpoint": "/api/admin/ordenes/upload-excel (numbering)",
+        "issue": "Orden 'numero' uses count_documents+1 which is non-atomic and can produce duplicate numeros under concurrent uploads or after deletions. Use an atomic counter collection or unique index."
+      },
+      {
+        "endpoint": "backend/.env bcrypt",
+        "issue": "Harmless WARNING in logs: 'error reading bcrypt version' (passlib expects bcrypt.__about__, removed in bcrypt>=4). Functionally fine."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_mvg_iter2.py",
+    "/app/backend/tests/test_mvg_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_iter2.xml"
+  ],
+  "action_items": [
+    "Optional: add /api/admin/sucursales/reset (or deep reset flag) so the Excel upload flow can be re-tested fully clean without resorting to direct Mongo manipulation.",
+    "Optional: include totals (clientes_total, comercios_total, ordenes_total) in the upload-excel summary in addition to *_creados, to avoid confusion when upserts are no-ops.",
+    "Optional: switch orden numbering from count_documents+1 to an atomic counter to avoid duplicate/race numeros.",
+    "Optional: silence passlib/bcrypt warning by pinning bcrypt<4.1 or upgrading passlib."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to ~1170 lines; recommend splitting into routers (auth, admin_users, admin_ordenes, tecnico) and a services module (excel_import, pdf, whatsapp).",
+    "upload_ordenes_excel is ~300 lines; extract FEMSA inventory parsing, CC iteration, and create_orden helper into separate functions for testability.",
+    "_id is consistently excluded from MongoDB results; good. enrich_orden does it via projection {'_id': 0}.",
+    "WhatsApp fallback_link link is built by stripping '+' from the phone — correct for wa.me format.",
+    "Pydantic field PinPadUpdate.evidencia_base64 is required (no default); empty string is caught manually with explicit 400. Missing key would yield 422 instead of 400 (same minor inconsistency as iter1's finalizar).",
+    "@app.on_event('startup'/'shutdown') is deprecated in FastAPI; migrate to lifespan.",
+    "CORS allow_origins=['*'] with allow_credentials=True is invalid per spec; not blocking but should be tightened."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mvg_iter2.py (new)",
+    "/app/test_assets/BASE_FEMSA_REGIONES.xlsx (new, fixture)"
+  ],
+  "success_rate": {"backend": "100% (12/12 iter2; 26/26 cumulative with iter1)", "frontend": "N/A - not requested"},
+  "seed_data_creation": "Test creates a técnico (TEST_tecnico_<uuid>@mvg.cl, password Tecnico123!, telefono +56912345678) plus a second 'other' técnico for the cross-access test (also TEST_ prefixed). The Excel import populates ~2 clientes, ~542 sucursales, ~542 ordenes, ~3202 pin pads — these are intentionally left in DB so the admin UI can be tested with realistic volume. Use POST /api/admin/ordenes/reset to clear ordenes between manual runs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Excel fixture is at /app/test_assets/BASE_FEMSA_REGIONES.xlsx. Tests live in /app/backend/tests/. Run: pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml. Iter2 tests must run in file order (they share state via class attributes TestAsignarYWhatsapp.assigned_orden_id / assigned_pin_pads). Reset only wipes ordenes; sucursales/clientes persist by design — drop them via Mongo if a fully clean import test is needed (db=mvg_database, cols=sucursales/clientes). WHATSAPP_BOT_URL is empty so all asignar calls return mode='fallback_link' with a valid wa.me link.",
+  "rca_of_issue": "Initial test_02 assertion failed because it expected comercios_creados >= 400 in the upload summary, but those counters track *newly inserted* records only; on re-runs after a reset (which doesn't wipe sucursales), upserts are no-ops and the counters legitimately report 0. Fixed by relying on /api/admin/comercios for total counts and validating ordenes_creadas (542) and pin_pads_total (3202) instead. No backend bug."
+}

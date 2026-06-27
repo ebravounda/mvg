@@ -8,13 +8,17 @@ import {
   ActivityIndicator,
   ScrollView,
   RefreshControl,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api/client";
+import * as DocumentPicker from "expo-document-picker";
+import { api, API_BASE } from "@/src/api/client";
+import { storage } from "@/src/utils/storage";
 import { StickyHeader } from "@/src/components/StickyHeader";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
+import { DeadlineBadge } from "@/src/components/DeadlineBadge";
 import { FormSheet } from "@/src/components/FormSheet";
 import { Field, Select, Btn } from "@/src/components/Form";
 import { showToast } from "@/src/components/Toast";
@@ -22,6 +26,7 @@ import { colors, spacing, radius, fontSize } from "@/src/theme";
 
 const FILTERS = [
   { label: "Todas", value: "" },
+  { label: "Sin asignar", value: "sin_asignar" },
   { label: "Pendientes", value: "pendiente" },
   { label: "En progreso", value: "en_progreso" },
   { label: "Finalizadas", value: "finalizada" },
@@ -33,27 +38,48 @@ export default function OrdenesList() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState("");
-  const [sheet, setSheet] = useState(false);
 
-  // form
+  // Create sheet
+  const [createSheet, setCreateSheet] = useState(false);
   const [clientes, setClientes] = useState<any[]>([]);
   const [sucursales, setSucursales] = useState<any[]>([]);
   const [tecnicos, setTecnicos] = useState<any[]>([]);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<any>({
     cliente_id: "",
     sucursal_id: "",
     tecnico_id: "",
     titulo: "",
     descripcion: "",
     prioridad: "media",
+    serie: "",
+    modelo: "",
+    ddll: "",
+    fecha_limite: "",
   });
   const [saving, setSaving] = useState(false);
 
+  // Upload sheet
+  const [uploadSheet, setUploadSheet] = useState(false);
+  const [uploadFile, setUploadFile] = useState<any>(null);
+  const [uploadPrioridad, setUploadPrioridad] = useState("media");
+  const [uploadFecha, setUploadFecha] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  // Actions menu
+  const [actionsOpen, setActionsOpen] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const url = filter ? `/admin/ordenes?estado=${filter}` : "/admin/ordenes";
+      let url = "/admin/ordenes";
+      if (filter && filter !== "sin_asignar") {
+        url += `?estado=${filter}`;
+      }
       const r = await api.get(url);
-      setItems(r.data);
+      let data = r.data;
+      if (filter === "sin_asignar") {
+        data = data.filter((o: any) => !o.tecnico_id);
+      }
+      setItems(data);
     } catch (e) {
       console.log("ordenes load err", e);
     } finally {
@@ -68,7 +94,8 @@ export default function OrdenesList() {
     }, [load])
   );
 
-  const openSheet = async () => {
+  const openCreate = async () => {
+    setActionsOpen(false);
     setForm({
       cliente_id: "",
       sucursal_id: "",
@@ -76,8 +103,12 @@ export default function OrdenesList() {
       titulo: "",
       descripcion: "",
       prioridad: "media",
+      serie: "",
+      modelo: "",
+      ddll: "",
+      fecha_limite: "",
     });
-    setSheet(true);
+    setCreateSheet(true);
     try {
       const [c, t] = await Promise.all([
         api.get("/admin/clientes"),
@@ -91,7 +122,7 @@ export default function OrdenesList() {
   };
 
   const onSelectCliente = async (cliente_id: string) => {
-    setForm((f) => ({ ...f, cliente_id, sucursal_id: "" }));
+    setForm((f: any) => ({ ...f, cliente_id, sucursal_id: "" }));
     try {
       const r = await api.get(`/admin/sucursales?cliente_id=${cliente_id}`);
       setSucursales(r.data);
@@ -100,27 +131,100 @@ export default function OrdenesList() {
     }
   };
 
-  const onSave = async () => {
+  const onSaveCreate = async () => {
     if (
       !form.cliente_id ||
       !form.sucursal_id ||
-      !form.tecnico_id ||
       !form.titulo ||
       !form.descripcion
     ) {
-      showToast("Completa todos los campos obligatorios", "error");
+      showToast("Completa cliente, comercio, título y descripción", "error");
       return;
     }
     setSaving(true);
     try {
-      await api.post("/admin/ordenes", form);
+      const payload: any = { ...form };
+      if (!payload.tecnico_id) delete payload.tecnico_id;
+      if (!payload.fecha_limite) delete payload.fecha_limite;
+      ["serie", "modelo", "ddll"].forEach((k) => {
+        if (!payload[k]) delete payload[k];
+      });
+      await api.post("/admin/ordenes", payload);
       showToast("Orden creada", "success");
-      setSheet(false);
+      setCreateSheet(false);
       load();
     } catch (e: any) {
-      showToast(e?.response?.data?.detail || "Error al crear orden", "error");
+      showToast(e?.response?.data?.detail || "Error", "error");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openUpload = () => {
+    setActionsOpen(false);
+    setUploadFile(null);
+    setUploadFecha("");
+    setUploadPrioridad("media");
+    setUploadSheet(true);
+  };
+
+  const pickExcel = async () => {
+    const res = await DocumentPicker.getDocumentAsync({
+      type: [
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "*/*",
+      ],
+      copyToCacheDirectory: true,
+    });
+    if (!res.canceled && res.assets?.[0]) {
+      setUploadFile(res.assets[0]);
+    }
+  };
+
+  const onUpload = async () => {
+    if (!uploadFile) {
+      showToast("Selecciona un archivo Excel", "error");
+      return;
+    }
+    setUploading(true);
+    try {
+      const token = await storage.secureGet<string>("mvg_token", "");
+      const fd = new FormData();
+      if (Platform.OS === "web" && uploadFile.file) {
+        fd.append("file", uploadFile.file);
+      } else {
+        fd.append("file", {
+          uri: uploadFile.uri,
+          name: uploadFile.name || "base.xlsx",
+          type:
+            uploadFile.mimeType ||
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        } as any);
+      }
+      if (uploadFecha) fd.append("fecha_limite", uploadFecha);
+      fd.append("prioridad", uploadPrioridad);
+
+      const res = await fetch(`${API_BASE}/admin/ordenes/upload-excel`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Error al cargar", "error");
+        return;
+      }
+      showToast(
+        `${data.ordenes_creadas} órdenes · ${data.comercios_creados} comercios · ${data.clientes_creados} clientes`,
+        "success"
+      );
+      setUploadSheet(false);
+      load();
+    } catch (e: any) {
+      showToast(String(e?.message || e), "error");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -130,8 +234,8 @@ export default function OrdenesList() {
         title="Órdenes"
         rightSlot={
           <TouchableOpacity
-            testID="crear-orden-btn"
-            onPress={openSheet}
+            testID="abrir-acciones-btn"
+            onPress={() => setActionsOpen(true)}
             style={styles.headerCta}
           >
             <Ionicons name="add" size={20} color="#fff" />
@@ -174,10 +278,7 @@ export default function OrdenesList() {
       </ScrollView>
 
       {loading ? (
-        <ActivityIndicator
-          color={colors.primary}
-          style={{ marginTop: 30 }}
-        />
+        <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
       ) : (
         <FlatList
           data={items}
@@ -206,7 +307,7 @@ export default function OrdenesList() {
               />
               <Text style={styles.emptyTxt}>No hay órdenes</Text>
               <Text style={styles.emptySub}>
-                Toca el botón + para crear una nueva orden
+                Toca el botón + para crear o cargar desde Excel
               </Text>
             </View>
           }
@@ -230,68 +331,211 @@ export default function OrdenesList() {
                   color={colors.textMuted}
                 />
                 <Text style={styles.meta} numberOfLines={1}>
-                  {o.cliente?.nombre} · {o.sucursal?.nombre}
+                  {o.cliente?.nombre_fantasia || o.cliente?.nombre}
                 </Text>
               </View>
+              {o.sucursal?.codigo_comercio && (
+                <View style={styles.row}>
+                  <Ionicons
+                    name="pricetag-outline"
+                    size={14}
+                    color={colors.accent}
+                  />
+                  <Text style={[styles.meta, { color: colors.accent }]}>
+                    CC {o.sucursal.codigo_comercio}
+                  </Text>
+                  {o.serie ? (
+                    <Text style={styles.meta} numberOfLines={1}>
+                      · Serie {o.serie}
+                    </Text>
+                  ) : null}
+                </View>
+              )}
               <View style={styles.row}>
                 <Ionicons
                   name="person-outline"
                   size={14}
                   color={colors.textMuted}
                 />
-                <Text style={styles.meta} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.meta,
+                    !o.tecnico && { color: colors.pending, fontWeight: "700" },
+                  ]}
+                  numberOfLines={1}
+                >
                   {o.tecnico
                     ? `${o.tecnico.nombre} ${o.tecnico.apellidos}`
-                    : "Sin asignar"}
+                    : "Sin asignar — toca para asignar"}
                 </Text>
               </View>
               <View style={styles.cardFoot}>
-                <PriorityBadge priority={o.prioridad} />
-                <Text style={styles.dateText}>
-                  {new Date(o.created_at).toLocaleDateString("es-CL")}
-                </Text>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <PriorityBadge priority={o.prioridad} />
+                  <DeadlineBadge fechaLimite={o.fecha_limite} />
+                </View>
               </View>
             </TouchableOpacity>
           )}
         />
       )}
 
+      {/* Actions chooser */}
       <FormSheet
-        visible={sheet}
-        onClose={() => setSheet(false)}
+        visible={actionsOpen}
+        onClose={() => setActionsOpen(false)}
+        title="Nueva orden"
+        testID="acciones-sheet"
+      >
+        <TouchableOpacity
+          testID="accion-cargar-excel"
+          style={styles.actionItem}
+          onPress={openUpload}
+        >
+          <View style={[styles.actionIcon, { backgroundColor: `${colors.accent}22` }]}>
+            <Ionicons name="document-attach" size={24} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.actionTitle}>Cargar desde Excel</Text>
+            <Text style={styles.actionSub}>
+              Importa órdenes masivamente desde planilla
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          testID="accion-crear-manual"
+          style={styles.actionItem}
+          onPress={openCreate}
+        >
+          <View style={[styles.actionIcon, { backgroundColor: `${colors.primary}22` }]}>
+            <Ionicons name="create" size={24} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.actionTitle}>Crear orden manual</Text>
+            <Text style={styles.actionSub}>
+              Crear una orden de servicio individual
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+      </FormSheet>
+
+      {/* Upload Excel sheet */}
+      <FormSheet
+        visible={uploadSheet}
+        onClose={() => setUploadSheet(false)}
+        title="Cargar órdenes desde Excel"
+        testID="upload-excel-sheet"
+      >
+        <Text style={styles.help}>
+          Selecciona un archivo Excel con la pestaña "CC" (columnas: RUT,
+          NOM_RAZON_SOCIAL, NOM_FANTASIA, CC, DIRECCION, COMUNA, #REGION,
+          M_MODELO, SERIEPI, DDLL).
+        </Text>
+
+        <TouchableOpacity
+          testID="picker-excel"
+          style={[
+            styles.filePicker,
+            uploadFile && { borderColor: colors.primary },
+          ]}
+          onPress={pickExcel}
+        >
+          <Ionicons
+            name={uploadFile ? "checkmark-circle" : "cloud-upload-outline"}
+            size={32}
+            color={uploadFile ? colors.completed : colors.accent}
+          />
+          <Text style={styles.fileText}>
+            {uploadFile ? uploadFile.name : "Toca para seleccionar Excel"}
+          </Text>
+          {uploadFile && (
+            <Text style={styles.fileSub}>
+              {Math.round((uploadFile.size || 0) / 1024)} KB · Toca para cambiar
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <Field
+          label="Fecha límite (opcional, YYYY-MM-DD)"
+          value={uploadFecha}
+          onChangeText={setUploadFecha}
+          placeholder="2026-07-31"
+          autoCapitalize="none"
+          testID="upload-fecha"
+        />
+
+        <Select
+          label="Prioridad para todas"
+          value={uploadPrioridad}
+          onChange={setUploadPrioridad}
+          options={[
+            { label: "Baja", value: "baja" },
+            { label: "Media", value: "media" },
+            { label: "Alta", value: "alta" },
+          ]}
+          testID="upload-prioridad"
+        />
+
+        <Btn
+          title="Cargar archivo"
+          onPress={onUpload}
+          loading={uploading}
+          disabled={!uploadFile}
+          variant="accent"
+          testID="upload-submit"
+          icon={<Ionicons name="cloud-upload" size={18} color="#fff" />}
+        />
+      </FormSheet>
+
+      {/* Manual create sheet */}
+      <FormSheet
+        visible={createSheet}
+        onClose={() => setCreateSheet(false)}
         title="Nueva orden de servicio"
         testID="nueva-orden-sheet"
       >
         <Select
-          label="Cliente"
+          label="Cliente *"
           value={form.cliente_id}
           onChange={onSelectCliente}
-          options={clientes.map((c) => ({ label: c.nombre, value: c.id }))}
+          options={clientes.map((c) => ({
+            label: c.nombre_fantasia || c.nombre,
+            value: c.id,
+          }))}
           testID="orden-cliente"
         />
         {form.cliente_id && (
           <Select
-            label="Sucursal"
+            label="Comercio (CC) *"
             value={form.sucursal_id}
-            onChange={(v) => setForm((f) => ({ ...f, sucursal_id: v }))}
-            options={sucursales.map((s) => ({ label: s.nombre, value: s.id }))}
+            onChange={(v) => setForm({ ...form, sucursal_id: v })}
+            options={sucursales.map((s) => ({
+              label: `${s.codigo_comercio || s.nombre}`,
+              value: s.id,
+            }))}
             testID="orden-sucursal"
           />
         )}
         <Select
-          label="Técnico"
+          label="Técnico (opcional)"
           value={form.tecnico_id}
-          onChange={(v) => setForm((f) => ({ ...f, tecnico_id: v }))}
-          options={tecnicos.map((t) => ({
-            label: `${t.nombre} ${t.apellidos}`,
-            value: t.id,
-          }))}
+          onChange={(v) => setForm({ ...form, tecnico_id: v })}
+          options={[
+            { label: "Sin asignar", value: "" },
+            ...tecnicos.map((t) => ({
+              label: `${t.nombre} ${t.apellidos}`,
+              value: t.id,
+            })),
+          ]}
           testID="orden-tecnico"
         />
         <Select
           label="Prioridad"
           value={form.prioridad}
-          onChange={(v) => setForm((f) => ({ ...f, prioridad: v }))}
+          onChange={(v) => setForm({ ...form, prioridad: v })}
           options={[
             { label: "Baja", value: "baja" },
             { label: "Media", value: "media" },
@@ -300,23 +544,53 @@ export default function OrdenesList() {
           testID="orden-prioridad"
         />
         <Field
-          label="Título"
+          label="Título *"
           value={form.titulo}
-          onChangeText={(v) => setForm((f) => ({ ...f, titulo: v }))}
+          onChangeText={(v) => setForm({ ...form, titulo: v })}
           placeholder="Ej: Mantención impresora"
           testID="orden-titulo"
         />
         <Field
-          label="Descripción del problema"
+          label="Descripción *"
           value={form.descripcion}
-          onChangeText={(v) => setForm((f) => ({ ...f, descripcion: v }))}
+          onChangeText={(v) => setForm({ ...form, descripcion: v })}
           placeholder="Detalla el problema reportado..."
           multiline
           testID="orden-descripcion"
         />
+        <Field
+          label="Serie equipo"
+          value={form.serie}
+          onChangeText={(v) => setForm({ ...form, serie: v })}
+          placeholder="S2PCD..."
+          autoCapitalize="characters"
+          testID="orden-serie"
+        />
+        <Field
+          label="Modelo"
+          value={form.modelo}
+          onChangeText={(v) => setForm({ ...form, modelo: v })}
+          placeholder="326017895"
+          testID="orden-modelo"
+        />
+        <Field
+          label="DDLL"
+          value={form.ddll}
+          onChangeText={(v) => setForm({ ...form, ddll: v })}
+          placeholder="DDLL"
+          testID="orden-ddll"
+        />
+        <Field
+          label="Fecha límite (YYYY-MM-DD)"
+          value={form.fecha_limite}
+          onChangeText={(v) => setForm({ ...form, fecha_limite: v })}
+          placeholder="2026-07-31"
+          autoCapitalize="none"
+          testID="orden-fecha"
+        />
         <Btn
           title="Crear orden"
-          onPress={onSave}
+          onPress={onSaveCreate}
           loading={saving}
           testID="orden-crear-submit"
         />
@@ -369,7 +643,7 @@ const styles = StyleSheet.create({
   },
   numero: { color: colors.accent, fontWeight: "700", fontSize: fontSize.sm },
   titulo: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
-  row: { flexDirection: "row", alignItems: "center", gap: 6 },
+  row: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   meta: { color: colors.textMuted, fontSize: fontSize.xs, flexShrink: 1 },
   cardFoot: {
     marginTop: 6,
@@ -377,7 +651,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  dateText: { color: colors.textDim, fontSize: fontSize.xs },
   empty: {
     alignItems: "center",
     paddingVertical: spacing.xxl,
@@ -385,4 +658,38 @@ const styles = StyleSheet.create({
   },
   emptyTxt: { color: colors.textMain, fontSize: fontSize.lg, fontWeight: "600" },
   emptySub: { color: colors.textMuted, fontSize: fontSize.sm, textAlign: "center" },
+
+  actionItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.lg,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  actionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: radius.full,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionTitle: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
+  actionSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+
+  filePicker: {
+    borderWidth: 2,
+    borderColor: colors.border,
+    borderStyle: "dashed",
+    borderRadius: radius.md,
+    padding: spacing.xl,
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceAlt,
+  },
+  fileText: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
+  fileSub: { color: colors.textMuted, fontSize: fontSize.xs },
+  help: { color: colors.textMuted, fontSize: fontSize.sm, lineHeight: 18 },
 });

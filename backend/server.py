@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordBearer
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -13,6 +13,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from pydantic import BaseModel, EmailStr, Field
+import openpyxl
+import io
+
+from whatsapp_service import send_whatsapp, build_assignment_message
+from pdf_service import build_orden_pdf
+from fastapi.responses import StreamingResponse
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -109,6 +115,7 @@ class TecnicoUpdate(BaseModel):
 
 class ClienteCreate(BaseModel):
     nombre: str
+    nombre_fantasia: Optional[str] = None
     rut: Optional[str] = None
     contacto: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -118,6 +125,7 @@ class ClienteCreate(BaseModel):
 
 class ClienteUpdate(BaseModel):
     nombre: Optional[str] = None
+    nombre_fantasia: Optional[str] = None
     rut: Optional[str] = None
     contacto: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -128,6 +136,7 @@ class ClienteUpdate(BaseModel):
 class Cliente(BaseModel):
     id: str
     nombre: str
+    nombre_fantasia: Optional[str] = None
     rut: Optional[str] = None
     contacto: Optional[str] = None
     email: Optional[str] = None
@@ -139,14 +148,20 @@ class Cliente(BaseModel):
 class SucursalCreate(BaseModel):
     cliente_id: str
     nombre: str
+    codigo_comercio: Optional[str] = None
     direccion: Optional[str] = None
+    comuna: Optional[str] = None
+    region: Optional[str] = None
     telefono: Optional[str] = None
     encargado: Optional[str] = None
 
 
 class SucursalUpdate(BaseModel):
     nombre: Optional[str] = None
+    codigo_comercio: Optional[str] = None
     direccion: Optional[str] = None
+    comuna: Optional[str] = None
+    region: Optional[str] = None
     telefono: Optional[str] = None
     encargado: Optional[str] = None
 
@@ -154,10 +169,14 @@ class SucursalUpdate(BaseModel):
 class OrdenCreate(BaseModel):
     cliente_id: str
     sucursal_id: str
-    tecnico_id: str
+    tecnico_id: Optional[str] = None
     titulo: str
     descripcion: str
     prioridad: str = Field(pattern="^(baja|media|alta)$")
+    serie: Optional[str] = None
+    modelo: Optional[str] = None
+    ddll: Optional[str] = None
+    fecha_limite: Optional[str] = None  # ISO date "YYYY-MM-DD"
 
 
 class OrdenUpdate(BaseModel):
@@ -165,10 +184,23 @@ class OrdenUpdate(BaseModel):
     descripcion: Optional[str] = None
     prioridad: Optional[str] = Field(default=None, pattern="^(baja|media|alta)$")
     tecnico_id: Optional[str] = None
+    serie: Optional[str] = None
+    modelo: Optional[str] = None
+    ddll: Optional[str] = None
+    fecha_limite: Optional[str] = None
+
+
+class OrdenAsignar(BaseModel):
+    tecnico_id: str
 
 
 class OrdenFinalizar(BaseModel):
     evidencia_base64: str  # base64 image data
+    notas: Optional[str] = None
+
+
+class PinPadUpdate(BaseModel):
+    evidencia_base64: str
     notas: Optional[str] = None
 
 
@@ -410,6 +442,37 @@ async def delete_sucursal(sucursal_id: str, _: dict = Depends(require_admin)):
 
 
 # ----------------- Admin: Órdenes -----------------
+async def _send_assignment_whatsapp(orden_id: str) -> dict:
+    """Helper: sends WhatsApp to the technician currently assigned to an orden."""
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    if not o or not o.get("tecnico_id"):
+        return {"ok": False, "mode": "no_tecnico", "detail": "Sin técnico asignado"}
+    tecnico = await users_col.find_one(
+        {"id": o["tecnico_id"]}, {"_id": 0, "hashed_password": 0}
+    )
+    if not tecnico:
+        return {"ok": False, "mode": "no_tecnico", "detail": "Técnico no encontrado"}
+    cliente = await clientes_col.find_one({"id": o["cliente_id"]}, {"_id": 0}) or {}
+    sucursal = await sucursales_col.find_one({"id": o["sucursal_id"]}, {"_id": 0}) or {}
+    msg = build_assignment_message(
+        tecnico_nombre=tecnico.get("nombre", ""),
+        numero=o.get("numero", ""),
+        cliente=cliente.get("nombre_fantasia") or cliente.get("nombre", "—"),
+        comercio=sucursal.get("nombre", "—"),
+        codigo_comercio=sucursal.get("codigo_comercio", "—"),
+        direccion=sucursal.get("direccion", "—"),
+        prioridad=o.get("prioridad", "media"),
+        fecha_limite=o.get("fecha_limite"),
+    )
+    result = await send_whatsapp(tecnico.get("telefono"), msg)
+    # store last notification result on the order
+    await ordenes_col.update_one(
+        {"id": orden_id},
+        {"$set": {"whatsapp_last": {**result, "to": tecnico.get("telefono"), "at": now_iso()}}},
+    )
+    return result
+
+
 @api_router.post("/admin/ordenes", status_code=201)
 async def create_orden(payload: OrdenCreate, admin: dict = Depends(require_admin)):
     # validations
@@ -421,13 +484,14 @@ async def create_orden(payload: OrdenCreate, admin: dict = Depends(require_admin
     )
     if not sucursal:
         raise HTTPException(
-            status_code=404, detail="Sucursal no encontrada para este cliente"
+            status_code=404, detail="Comercio no encontrado para este cliente"
         )
-    tecnico = await users_col.find_one(
-        {"id": payload.tecnico_id, "role": "tecnico"}
-    )
-    if not tecnico:
-        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    if payload.tecnico_id:
+        tecnico = await users_col.find_one(
+            {"id": payload.tecnico_id, "role": "tecnico"}
+        )
+        if not tecnico:
+            raise HTTPException(status_code=404, detail="Técnico no encontrado")
 
     # Generate numero correlativo
     count = await ordenes_col.count_documents({})
@@ -442,6 +506,10 @@ async def create_orden(payload: OrdenCreate, admin: dict = Depends(require_admin
         "titulo": payload.titulo,
         "descripcion": payload.descripcion,
         "prioridad": payload.prioridad,
+        "serie": payload.serie,
+        "modelo": payload.modelo,
+        "ddll": payload.ddll,
+        "fecha_limite": payload.fecha_limite,
         "estado": "pendiente",
         "evidencia_base64": None,
         "notas_tecnico": None,
@@ -449,9 +517,424 @@ async def create_orden(payload: OrdenCreate, admin: dict = Depends(require_admin
         "created_at": now_iso(),
         "started_at": None,
         "finalized_at": None,
+        "whatsapp_last": None,
     }
     await ordenes_col.insert_one(doc)
-    return await enrich_orden(doc)
+
+    if payload.tecnico_id:
+        await _send_assignment_whatsapp(doc["id"])
+
+    o = await ordenes_col.find_one({"id": doc["id"]}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+@api_router.patch("/admin/ordenes/{orden_id}/asignar")
+async def asignar_tecnico(
+    orden_id: str, payload: OrdenAsignar, _: dict = Depends(require_admin)
+):
+    orden = await ordenes_col.find_one({"id": orden_id})
+    if not orden:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    tecnico = await users_col.find_one(
+        {"id": payload.tecnico_id, "role": "tecnico"}
+    )
+    if not tecnico:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    await ordenes_col.update_one(
+        {"id": orden_id}, {"$set": {"tecnico_id": payload.tecnico_id}}
+    )
+    wa = await _send_assignment_whatsapp(orden_id)
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    enriched = await enrich_orden(o)
+    return {"orden": enriched, "whatsapp": wa}
+
+
+@api_router.post("/admin/ordenes/upload-excel")
+async def upload_ordenes_excel(
+    file: UploadFile = File(...),
+    fecha_limite: Optional[str] = Form(None),
+    prioridad: str = Form("media"),
+    admin: dict = Depends(require_admin),
+):
+    """Upload Excel file (BASE FEMSA REGIONES style) to bulk-create ordenes.
+
+    Strategy:
+      - Sheet "FEMSA" (if present): master inventory of pin pads
+        Columns: RUT, NOM_RAZON_SOCIAL, NOM_FANTASIA, CC, DIRECCION, COMUNA,
+                 #REGION, M_MODELO, SERIEPI, DDLL
+      - Sheet "CC" (if present): work orders to create (one orden per row).
+        Columns include: RUT, NOM_RAZON_SOCIAL, NOM_FANTASIA, CC, DIRECCION,
+                         COMUNA, #REGION, Cantidad, Fecha
+      - For each CC row: locate matching pin pads from FEMSA inventory by
+        (rut, CC); create ONE orden with that list of pin_pads.
+      - If only FEMSA exists: group its rows by (rut, CC) and create one
+        orden per group with all its pin pads.
+    """
+    if prioridad not in ("baja", "media", "alta"):
+        prioridad = "media"
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel inválido: {e}")
+
+    sheet_femsa = None
+    sheet_cc = None
+    for s in wb.sheetnames:
+        low = s.strip().lower()
+        if low == "femsa":
+            sheet_femsa = s
+        elif low == "cc":
+            sheet_cc = s
+    if not sheet_femsa and not sheet_cc:
+        # fallback: first sheet
+        sheet_femsa = wb.sheetnames[0]
+
+    def make_cell_fn(headers_row):
+        h = [str(h).strip() if h is not None else "" for h in headers_row]
+        idx = {x.upper(): i for i, x in enumerate(h)}
+
+        def get(row, name):
+            i = idx.get(name.upper())
+            if i is None or i >= len(row):
+                return None
+            v = row[i]
+            if v is None:
+                return None
+            if hasattr(v, "isoformat"):
+                # date/datetime
+                try:
+                    return v.date().isoformat() if hasattr(v, "date") else v.isoformat()
+                except Exception:
+                    return str(v)
+            s = str(v).strip()
+            return s if s else None
+
+        return get
+
+    # Build FEMSA inventory: (rut_or_razon, cc) -> [pin_pad_dict]
+    inventory: dict = {}
+    if sheet_femsa:
+        ws = wb[sheet_femsa]
+        rows = list(ws.iter_rows(values_only=True))
+        if rows:
+            get = make_cell_fn(rows[0])
+            for row in rows[1:]:
+                if not row or all(c is None for c in row):
+                    continue
+                rut = get(row, "RUT")
+                razon = get(row, "NOM_RAZON_SOCIAL")
+                cc = get(row, "CC")
+                if not cc:
+                    continue
+                modelo = get(row, "M_MODELO") or get(row, "MODELO")
+                serie = get(row, "SERIEPI") or get(row, "SERIE")
+                ddll = get(row, "DDLL")
+                if not (serie or ddll):
+                    continue
+                key = ((rut or razon or "").strip(), cc.strip())
+                inventory.setdefault(key, []).append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "serie": serie,
+                        "modelo": modelo,
+                        "ddll": ddll,
+                        "completed": False,
+                        "evidencia_base64": None,
+                        "notas": None,
+                        "completed_at": None,
+                    }
+                )
+
+    summary = {
+        "total_rows": 0,
+        "ordenes_creadas": 0,
+        "clientes_creados": 0,
+        "comercios_creados": 0,
+        "pin_pads_total": 0,
+        "errores": [],
+    }
+
+    async def upsert_cliente(rut, razon, fantasia):
+        cli_query = {"rut": rut} if rut else {"nombre": razon}
+        cli = await clientes_col.find_one(cli_query)
+        if not cli:
+            cli = {
+                "id": str(uuid.uuid4()),
+                "nombre": razon or fantasia,
+                "nombre_fantasia": fantasia,
+                "rut": rut,
+                "contacto": None,
+                "email": None,
+                "telefono": None,
+                "direccion": None,
+                "created_at": now_iso(),
+            }
+            await clientes_col.insert_one(cli)
+            summary["clientes_creados"] += 1
+        else:
+            if fantasia and not cli.get("nombre_fantasia"):
+                await clientes_col.update_one(
+                    {"id": cli["id"]}, {"$set": {"nombre_fantasia": fantasia}}
+                )
+        return cli
+
+    async def upsert_comercio(cliente, cc, direccion, comuna, region, fantasia, razon):
+        suc = await sucursales_col.find_one(
+            {"cliente_id": cliente["id"], "codigo_comercio": cc}
+        )
+        if not suc:
+            suc = {
+                "id": str(uuid.uuid4()),
+                "cliente_id": cliente["id"],
+                "nombre": (fantasia or razon or "") + f" - {cc}",
+                "codigo_comercio": cc,
+                "direccion": direccion,
+                "comuna": comuna,
+                "region": region,
+                "telefono": None,
+                "encargado": None,
+                "created_at": now_iso(),
+            }
+            await sucursales_col.insert_one(suc)
+            summary["comercios_creados"] += 1
+        return suc
+
+    async def create_orden(cliente, suc, cc, fecha_lim, pin_pads, direccion):
+        # fresh copies of pin_pads (new ids each time)
+        fresh_pp = [
+            {
+                **pp,
+                "id": str(uuid.uuid4()),
+                "completed": False,
+                "evidencia_base64": None,
+                "notas": None,
+                "completed_at": None,
+            }
+            for pp in pin_pads
+        ]
+        count = await ordenes_col.count_documents({})
+        numero = f"OS-{datetime.now().year}-{count + 1:04d}"
+        num_pp = len(fresh_pp)
+        titulo = f"Actualización Pin Pads · CC {cc}"
+        descripcion = (
+            f"Actualizar {num_pp} pin pad{'s' if num_pp != 1 else ''} en el "
+            f"comercio CC {cc} ({direccion or '—'})."
+        )
+        doc = {
+            "id": str(uuid.uuid4()),
+            "numero": numero,
+            "cliente_id": cliente["id"],
+            "sucursal_id": suc["id"],
+            "tecnico_id": None,
+            "titulo": titulo,
+            "descripcion": descripcion,
+            "prioridad": prioridad,
+            "serie": None,
+            "modelo": None,
+            "ddll": None,
+            "fecha_limite": fecha_lim,
+            "estado": "pendiente",
+            "evidencia_base64": None,
+            "notas_tecnico": None,
+            "pin_pads": fresh_pp,
+            "created_by": admin["id"],
+            "created_at": now_iso(),
+            "started_at": None,
+            "finalized_at": None,
+            "whatsapp_last": None,
+        }
+        await ordenes_col.insert_one(doc)
+        summary["ordenes_creadas"] += 1
+        summary["pin_pads_total"] += num_pp
+
+    if sheet_cc:
+        ws = wb[sheet_cc]
+        rows = list(ws.iter_rows(values_only=True))
+        if rows:
+            get = make_cell_fn(rows[0])
+            for row in rows[1:]:
+                if not row or all(c is None for c in row):
+                    continue
+                summary["total_rows"] += 1
+                try:
+                    rut = get(row, "RUT")
+                    razon = get(row, "NOM_RAZON_SOCIAL")
+                    fantasia = get(row, "NOM_FANTASIA")
+                    cc = get(row, "CC")
+                    direccion = get(row, "DIRECCION")
+                    comuna = get(row, "COMUNA")
+                    region = get(row, "#REGION") or get(row, "REGION")
+                    fecha_row = get(row, "Fecha") or get(row, "FECHA")
+                    if not cc:
+                        summary["errores"].append("Fila sin CC")
+                        continue
+                    fecha_lim = fecha_row or fecha_limite
+
+                    cliente = await upsert_cliente(rut, razon, fantasia)
+                    suc = await upsert_comercio(
+                        cliente, cc, direccion, comuna, region, fantasia, razon
+                    )
+                    # look up pin pads from inventory
+                    key = ((rut or razon or "").strip(), cc.strip())
+                    pin_pads = inventory.get(key, [])
+                    await create_orden(cliente, suc, cc, fecha_lim, pin_pads, direccion)
+                except Exception as e:
+                    summary["errores"].append(f"CC {cc}: {str(e)[:120]}")
+    else:
+        # Only FEMSA exists: group by (rut, cc)
+        groups: dict = {}
+        ws = wb[sheet_femsa]
+        rows = list(ws.iter_rows(values_only=True))
+        if rows:
+            get = make_cell_fn(rows[0])
+            for row in rows[1:]:
+                if not row or all(c is None for c in row):
+                    continue
+                summary["total_rows"] += 1
+                rut = get(row, "RUT")
+                razon = get(row, "NOM_RAZON_SOCIAL")
+                fantasia = get(row, "NOM_FANTASIA")
+                cc = get(row, "CC")
+                if not cc:
+                    continue
+                direccion = get(row, "DIRECCION")
+                comuna = get(row, "COMUNA")
+                region = get(row, "#REGION") or get(row, "REGION")
+                modelo = get(row, "M_MODELO")
+                serie = get(row, "SERIEPI")
+                ddll = get(row, "DDLL")
+                gkey = ((rut or razon or "").strip(), cc.strip())
+                g = groups.setdefault(
+                    gkey,
+                    {
+                        "rut": rut,
+                        "razon": razon,
+                        "fantasia": fantasia,
+                        "cc": cc,
+                        "direccion": direccion,
+                        "comuna": comuna,
+                        "region": region,
+                        "pin_pads": [],
+                    },
+                )
+                if serie or ddll:
+                    g["pin_pads"].append(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "serie": serie,
+                            "modelo": modelo,
+                            "ddll": ddll,
+                            "completed": False,
+                            "evidencia_base64": None,
+                            "notas": None,
+                            "completed_at": None,
+                        }
+                    )
+
+        for _, g in groups.items():
+            try:
+                cliente = await upsert_cliente(g["rut"], g["razon"], g["fantasia"])
+                suc = await upsert_comercio(
+                    cliente,
+                    g["cc"],
+                    g["direccion"],
+                    g["comuna"],
+                    g["region"],
+                    g["fantasia"],
+                    g["razon"],
+                )
+                await create_orden(
+                    cliente, suc, g["cc"], fecha_limite, g["pin_pads"], g["direccion"]
+                )
+            except Exception as e:
+                summary["errores"].append(f"CC {g['cc']}: {str(e)[:120]}")
+
+    return summary
+
+
+@api_router.post("/admin/ordenes/reset")
+async def reset_ordenes(_: dict = Depends(require_admin)):
+    """Elimina TODAS las órdenes (mantiene clientes, comercios y técnicos)."""
+    r = await ordenes_col.delete_many({})
+    return {"deleted": r.deleted_count}
+
+
+@api_router.get("/admin/comercios")
+async def list_comercios(_: dict = Depends(require_admin)):
+    """Returns all comercios with cliente info and pin_pads summary derived from ordenes."""
+    sucursales = await sucursales_col.find({}, {"_id": 0}).to_list(5000)
+    out = []
+    for s in sucursales:
+        cliente = await clientes_col.find_one(
+            {"id": s.get("cliente_id")}, {"_id": 0}
+        )
+        # Aggregate pin_pads across all ordenes of this comercio
+        ordenes = await ordenes_col.find(
+            {"sucursal_id": s["id"]}, {"_id": 0}
+        ).to_list(2000)
+        pin_pads_map = {}
+        ordenes_count = 0
+        finalizadas_count = 0
+        for o in ordenes:
+            ordenes_count += 1
+            if o.get("estado") == "finalizada":
+                finalizadas_count += 1
+            for pp in o.get("pin_pads") or []:
+                key = (pp.get("serie") or "") + "|" + (pp.get("ddll") or "")
+                if key not in pin_pads_map:
+                    pin_pads_map[key] = {
+                        "serie": pp.get("serie"),
+                        "modelo": pp.get("modelo"),
+                        "ddll": pp.get("ddll"),
+                    }
+            # legacy single-pinpad ordenes
+            if not o.get("pin_pads") and (o.get("serie") or o.get("ddll")):
+                key = (o.get("serie") or "") + "|" + (o.get("ddll") or "")
+                if key not in pin_pads_map:
+                    pin_pads_map[key] = {
+                        "serie": o.get("serie"),
+                        "modelo": o.get("modelo"),
+                        "ddll": o.get("ddll"),
+                    }
+        out.append(
+            {
+                **s,
+                "cliente": cliente,
+                "pin_pads": list(pin_pads_map.values()),
+                "pin_pads_count": len(pin_pads_map),
+                "ordenes_count": ordenes_count,
+                "ordenes_finalizadas": finalizadas_count,
+            }
+        )
+    # sort by cliente name then cc
+    out.sort(
+        key=lambda x: (
+            (x.get("cliente") or {}).get("nombre_fantasia")
+            or (x.get("cliente") or {}).get("nombre", ""),
+            x.get("codigo_comercio") or "",
+        )
+    )
+    return out
+
+
+@api_router.get("/admin/ordenes/{orden_id}/pdf")
+async def orden_pdf(orden_id: str, _: dict = Depends(require_admin)):
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    cliente = await clientes_col.find_one({"id": o.get("cliente_id")}, {"_id": 0}) or {}
+    sucursal = await sucursales_col.find_one({"id": o.get("sucursal_id")}, {"_id": 0}) or {}
+    tecnico = await users_col.find_one(
+        {"id": o.get("tecnico_id")}, {"_id": 0, "hashed_password": 0}
+    ) or {}
+    pdf_bytes = build_orden_pdf(o, cliente, sucursal, tecnico)
+    filename = f"orden_{o.get('numero', orden_id)}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @api_router.get("/admin/ordenes")
@@ -570,6 +1053,52 @@ async def iniciar_orden(orden_id: str, tec: dict = Depends(require_tecnico)):
         {"id": orden_id},
         {"$set": {"estado": "en_progreso", "started_at": now_iso()}},
     )
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+@api_router.patch("/tecnico/ordenes/{orden_id}/pinpad/{pinpad_id}")
+async def update_pinpad(
+    orden_id: str,
+    pinpad_id: str,
+    payload: PinPadUpdate,
+    tec: dict = Depends(require_tecnico),
+):
+    """Técnico marca UN pin pad como actualizado con evidencia fotográfica."""
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    if not payload.evidencia_base64:
+        raise HTTPException(status_code=400, detail="Evidencia requerida")
+
+    pin_pads = o.get("pin_pads") or []
+    found = False
+    all_done = True
+    for pp in pin_pads:
+        if pp.get("id") == pinpad_id:
+            pp["completed"] = True
+            pp["evidencia_base64"] = payload.evidencia_base64
+            pp["notas"] = payload.notas
+            pp["completed_at"] = now_iso()
+            found = True
+        if not pp.get("completed"):
+            all_done = False
+    if not found:
+        raise HTTPException(status_code=404, detail="Pin pad no encontrado")
+
+    set_data = {"pin_pads": pin_pads}
+    # auto-start if pendiente
+    if o.get("estado") == "pendiente":
+        set_data["estado"] = "en_progreso"
+        set_data["started_at"] = now_iso()
+    # auto-finalize if all done
+    if all_done:
+        set_data["estado"] = "finalizada"
+        set_data["finalized_at"] = now_iso()
+
+    await ordenes_col.update_one({"id": orden_id}, {"$set": set_data})
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
     return await enrich_orden(o)
 

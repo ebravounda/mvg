@@ -70,6 +70,15 @@ export default function AdminLayout() {
         }}
       />
       <Tabs.Screen
+        name="comercios"
+        options={{
+          title: "Comercios",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="storefront-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="tecnicos"
         options={{
           title: "Técnicos",

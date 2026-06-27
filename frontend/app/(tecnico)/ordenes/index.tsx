@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   ScrollView,
   RefreshControl,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -16,6 +17,7 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { StickyHeader } from "@/src/components/StickyHeader";
 import { StatusBadge, PriorityBadge } from "@/src/components/Badges";
+import { DeadlineBadge } from "@/src/components/DeadlineBadge";
 import { colors, spacing, radius, fontSize } from "@/src/theme";
 
 const FILTERS = [
@@ -56,6 +58,12 @@ export default function TecnicoOrdenes() {
     }, [load])
   );
 
+  const openMaps = (direccion: string) => {
+    Linking.openURL(
+      `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(direccion)}`
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StickyHeader title="Mis órdenes" />
@@ -63,9 +71,8 @@ export default function TecnicoOrdenes() {
       <View style={styles.greetWrap}>
         <Text style={styles.greet}>Hola, {user?.nombre}</Text>
         <Text style={styles.greetSub}>
-          Tienes {stats?.pendientes || 0} pendiente
-          {stats?.pendientes === 1 ? "" : "s"} ·{" "}
-          {stats?.en_progreso || 0} en progreso
+          {stats?.pendientes || 0} pendientes · {stats?.en_progreso || 0} en
+          progreso
         </Text>
       </View>
 
@@ -147,40 +154,63 @@ export default function TecnicoOrdenes() {
                 <Text style={styles.numero}>{o.numero}</Text>
                 <StatusBadge status={o.estado} />
               </View>
-              <Text style={styles.titulo} numberOfLines={1}>
-                {o.titulo}
-              </Text>
-              <View style={styles.row}>
-                <Ionicons
-                  name="business-outline"
-                  size={14}
-                  color={colors.textMuted}
-                />
-                <Text style={styles.meta} numberOfLines={1}>
-                  {o.cliente?.nombre} · {o.sucursal?.nombre}
-                </Text>
-              </View>
-              {o.sucursal?.direccion && (
-                <View style={styles.row}>
-                  <Ionicons
-                    name="location-outline"
-                    size={14}
-                    color={colors.textMuted}
-                  />
-                  <Text style={styles.meta} numberOfLines={1}>
-                    {o.sucursal.direccion}
+
+              {o.sucursal?.codigo_comercio && (
+                <View style={styles.ccPill}>
+                  <Ionicons name="pricetag" size={14} color={colors.accent} />
+                  <Text style={styles.ccText}>
+                    CC {o.sucursal.codigo_comercio}
                   </Text>
                 </View>
               )}
+
+              {(o.serie || o.ddll) && (
+                <View style={styles.row}>
+                  {o.serie && (
+                    <Text style={styles.metaBold} numberOfLines={1}>
+                      Serie: {o.serie}
+                    </Text>
+                  )}
+                  {o.ddll && (
+                    <Text style={styles.metaBold} numberOfLines={1}>
+                      · DDLL: {o.ddll}
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {o.sucursal?.direccion && (
+                <TouchableOpacity
+                  testID={`tec-orden-${o.id}-maps`}
+                  onPress={() => openMaps(o.sucursal.direccion)}
+                  style={styles.row}
+                >
+                  <Ionicons
+                    name="location-outline"
+                    size={14}
+                    color={colors.primary}
+                  />
+                  <Text
+                    style={[styles.meta, { color: colors.primary }]}
+                    numberOfLines={1}
+                  >
+                    {o.sucursal.direccion}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               <View style={styles.cardFoot}>
-                <PriorityBadge priority={o.prioridad} />
+                <View style={{ flexDirection: "row", gap: 6, flex: 1, flexWrap: "wrap" }}>
+                  <PriorityBadge priority={o.prioridad} />
+                  <DeadlineBadge fechaLimite={o.fecha_limite} />
+                </View>
                 <View style={styles.actionHint}>
                   <Text style={styles.actionHintText}>
                     {o.estado === "pendiente"
-                      ? "Iniciar trabajo"
+                      ? "Iniciar"
                       : o.estado === "en_progreso"
-                      ? "Finalizar trabajo"
-                      : "Ver detalle"}
+                      ? "Finalizar"
+                      : "Ver"}
                   </Text>
                   <Ionicons
                     name="chevron-forward"
@@ -199,10 +229,7 @@ export default function TecnicoOrdenes() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  greetWrap: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-  },
+  greetWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   greet: { color: colors.textMain, fontSize: fontSize.xl, fontWeight: "800" },
   greetSub: { color: colors.textMuted, fontSize: fontSize.sm, marginTop: 2 },
   filterScroll: { maxHeight: 56, flexGrow: 0 },
@@ -238,9 +265,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   numero: { color: colors.accent, fontWeight: "700", fontSize: fontSize.sm },
-  titulo: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "700" },
-  row: { flexDirection: "row", alignItems: "center", gap: 6 },
+  ccPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    backgroundColor: `${colors.accent}22`,
+    borderWidth: 1,
+    borderColor: `${colors.accent}55`,
+  },
+  ccText: { color: colors.accent, fontWeight: "800", fontSize: fontSize.sm },
+  row: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   meta: { color: colors.textMuted, fontSize: fontSize.xs, flexShrink: 1 },
+  metaBold: { color: colors.textMain, fontSize: fontSize.xs, fontWeight: "600" },
   cardFoot: {
     marginTop: 6,
     flexDirection: "row",
@@ -248,7 +288,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   actionHint: { flexDirection: "row", alignItems: "center", gap: 2 },
-  actionHintText: { color: colors.primary, fontSize: fontSize.xs, fontWeight: "600" },
+  actionHintText: { color: colors.primary, fontSize: fontSize.xs, fontWeight: "700" },
   empty: {
     alignItems: "center",
     paddingVertical: spacing.xxl,
