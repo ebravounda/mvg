@@ -65,6 +65,39 @@ export default function ComerciosScreen() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StickyHeader title="Comercios" showBack />
 
+      <View style={styles.toolbar}>
+        <TouchableOpacity
+          testID="export-csv-btn"
+          style={styles.exportBtn}
+          onPress={async () => {
+            try {
+              const token = await (
+                await import("@/src/utils/storage")
+              ).storage.secureGet<string>("mvg_token", "");
+              const { API_BASE } = await import("@/src/api/client");
+              const url = `${API_BASE}/admin/comercios/export.csv`;
+              if (typeof window !== "undefined") {
+                const r = await fetch(url, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                const blob = await r.blob();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = "comercios_mvg.csv";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              }
+            } catch (e) {
+              console.log(e);
+            }
+          }}
+        >
+          <Ionicons name="download-outline" size={16} color="#fff" />
+          <Text style={styles.exportBtnText}>Exportar CSV</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.searchBox}>
         <Ionicons name="search" size={16} color={colors.textMuted} />
         <TextInput
@@ -256,6 +289,22 @@ const InfoRow: React.FC<{ icon: any; label: string; value: string }> = ({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
+  toolbar: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  exportBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.completed,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+  },
+  exportBtnText: { color: "#fff", fontSize: fontSize.sm, fontWeight: "700" },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",

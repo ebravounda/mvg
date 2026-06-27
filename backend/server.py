@@ -872,6 +872,76 @@ async def reset_ordenes(_: dict = Depends(require_admin)):
     return {"deleted": r.deleted_count}
 
 
+@api_router.get("/admin/comercios/export.csv")
+async def export_comercios_csv(_: dict = Depends(require_admin)):
+    """Exporta CSV con: Cliente, CC, Dirección, Comuna, Región, Serie, DDLL, Modelo."""
+    sucursales = await sucursales_col.find({}, {"_id": 0}).to_list(5000)
+    lines = ["Cliente,CC,Direccion,Comuna,Region,Serie,DDLL,Modelo"]
+
+    def csv_escape(v):
+        if v is None:
+            return ""
+        s = str(v).replace('"', '""')
+        if "," in s or "\n" in s or '"' in s:
+            return f'"{s}"'
+        return s
+
+    for s in sucursales:
+        cliente = await clientes_col.find_one({"id": s.get("cliente_id")}, {"_id": 0})
+        cli_name = (cliente or {}).get("nombre_fantasia") or (cliente or {}).get("nombre", "")
+        ordenes = await ordenes_col.find(
+            {"sucursal_id": s["id"]}, {"_id": 0}
+        ).to_list(2000)
+        seen = set()
+        pp_list = []
+        for o in ordenes:
+            for pp in o.get("pin_pads") or []:
+                k = (pp.get("serie") or "") + "|" + (pp.get("ddll") or "")
+                if k not in seen:
+                    seen.add(k)
+                    pp_list.append(pp)
+        if not pp_list:
+            lines.append(
+                ",".join(
+                    csv_escape(x)
+                    for x in [
+                        cli_name,
+                        s.get("codigo_comercio"),
+                        s.get("direccion"),
+                        s.get("comuna"),
+                        s.get("region"),
+                        "",
+                        "",
+                        "",
+                    ]
+                )
+            )
+        for pp in pp_list:
+            lines.append(
+                ",".join(
+                    csv_escape(x)
+                    for x in [
+                        cli_name,
+                        s.get("codigo_comercio"),
+                        s.get("direccion"),
+                        s.get("comuna"),
+                        s.get("region"),
+                        pp.get("serie"),
+                        pp.get("ddll"),
+                        pp.get("modelo"),
+                    ]
+                )
+            )
+    csv_text = "\n".join(lines) + "\n"
+    return StreamingResponse(
+        io.BytesIO(csv_text.encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="comercios_mvg.csv"'
+        },
+    )
+
+
 @api_router.get("/admin/comercios")
 async def list_comercios(_: dict = Depends(require_admin)):
     """Returns all comercios with cliente info and pin_pads summary derived from ordenes."""

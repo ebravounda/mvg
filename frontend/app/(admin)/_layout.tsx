@@ -1,13 +1,15 @@
 import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Image, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/context/AuthContext";
-import { colors } from "@/src/theme";
+import { useResponsive } from "@/src/hooks/useResponsive";
+import { colors, MVG_LOGO_URL } from "@/src/theme";
 
 export default function AdminLayout() {
   const { user, loading } = useAuth();
   const insets = useSafeAreaInsets();
+  const { isDesktop } = useResponsive();
 
   if (loading) {
     return (
@@ -32,14 +34,74 @@ export default function AdminLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: {
-          backgroundColor: colors.surfaceAlt,
-          borderTopColor: colors.border,
-          height: 60 + insets.bottom,
-          paddingBottom: insets.bottom + 6,
-          paddingTop: 6,
-        },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
+        tabBarPosition: isDesktop ? "left" : "bottom",
+        tabBarLabelPosition: isDesktop ? "beside-icon" : "below-icon",
+        tabBarStyle: isDesktop
+          ? {
+              width: 240,
+              backgroundColor: colors.surfaceAlt,
+              borderRightWidth: 1,
+              borderRightColor: colors.border,
+              borderTopWidth: 0,
+              paddingTop: 24,
+              paddingHorizontal: 8,
+            }
+          : {
+              backgroundColor: colors.surfaceAlt,
+              borderTopColor: colors.border,
+              height: 60 + insets.bottom,
+              paddingBottom: insets.bottom + 6,
+              paddingTop: 6,
+            },
+        tabBarItemStyle: isDesktop
+          ? {
+              height: 48,
+              borderRadius: 10,
+              marginBottom: 4,
+              justifyContent: "flex-start",
+              paddingHorizontal: 14,
+            }
+          : undefined,
+        tabBarLabelStyle: isDesktop
+          ? { fontSize: 14, fontWeight: "600", marginLeft: 8 }
+          : { fontSize: 11, fontWeight: "600" },
+        tabBarBackground: isDesktop
+          ? () => (
+              <View
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surfaceAlt,
+                  paddingHorizontal: 16,
+                  paddingTop: 28,
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 18,
+                  }}
+                >
+                  <Image
+                    source={{ uri: MVG_LOGO_URL }}
+                    style={{ width: 50, height: 28 }}
+                    resizeMode="contain"
+                  />
+                  <View>
+                    <Text
+                      style={{ color: colors.textMain, fontWeight: "800", fontSize: 14 }}
+                    >
+                      MVG
+                    </Text>
+                    <Text style={{ color: colors.textMuted, fontSize: 10 }}>
+                      Computación
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )
+          : undefined,
       }}
     >
       <Tabs.Screen
