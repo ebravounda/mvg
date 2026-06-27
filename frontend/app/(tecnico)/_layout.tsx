@@ -51,6 +51,15 @@ export default function TecnicoLayout() {
         }}
       />
       <Tabs.Screen
+        name="suministros"
+        options={{
+          title: "Suministros",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cube-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="perfil"
         options={{
           title: "Perfil",

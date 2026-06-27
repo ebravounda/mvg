@@ -100,6 +100,15 @@ export default function AdminLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="suministros"
+        options={{
+          title: "Suministros",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="cube-outline" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

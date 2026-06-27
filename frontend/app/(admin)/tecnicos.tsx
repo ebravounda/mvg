@@ -20,6 +20,7 @@ import { colors, spacing, radius, fontSize } from "@/src/theme";
 
 export default function TecnicosList() {
   const [items, setItems] = useState<any[]>([]);
+  const [bodegas, setBodegas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sheet, setSheet] = useState(false);
@@ -31,12 +32,17 @@ export default function TecnicosList() {
     email: "",
     telefono: "",
     password: "",
+    bodega_id: "",
   });
 
   const load = useCallback(async () => {
     try {
-      const r = await api.get("/admin/tecnicos");
+      const [r, b] = await Promise.all([
+        api.get("/admin/tecnicos"),
+        api.get("/admin/bodegas"),
+      ]);
       setItems(r.data);
+      setBodegas(b.data);
     } catch (e) {
       console.log(e);
     } finally {
@@ -59,6 +65,7 @@ export default function TecnicosList() {
       email: "",
       telefono: "",
       password: "",
+      bodega_id: "",
     });
     setSheet(true);
   };
@@ -81,7 +88,10 @@ export default function TecnicosList() {
     }
     setSaving(true);
     try {
-      await api.post("/admin/tecnicos", form);
+      await api.post("/admin/tecnicos", {
+        ...form,
+        bodega_id: form.bodega_id || null,
+      });
       showToast("Técnico creado", "success");
       setSheet(false);
       load();
@@ -230,6 +240,50 @@ export default function TecnicosList() {
           autoCapitalize="none"
           testID="tecnico-password"
         />
+
+        <Text style={styles.bodegaLabel}>Bodega asignada</Text>
+        <View style={styles.bodegaPicker}>
+          <TouchableOpacity
+            testID="tecnico-bodega-empty"
+            onPress={() => setForm({ ...form, bodega_id: "" })}
+            style={[styles.bodegaChip, !form.bodega_id && styles.bodegaChipActive]}
+          >
+            <Text
+              style={[
+                styles.bodegaChipText,
+                !form.bodega_id && { color: colors.primary, fontWeight: "700" },
+              ]}
+            >
+              Sin bodega
+            </Text>
+          </TouchableOpacity>
+          {bodegas.map((b) => (
+            <TouchableOpacity
+              key={b.id}
+              testID={`tecnico-bodega-${b.id}`}
+              onPress={() => setForm({ ...form, bodega_id: b.id })}
+              style={[
+                styles.bodegaChip,
+                form.bodega_id === b.id && styles.bodegaChipActive,
+              ]}
+            >
+              <Ionicons
+                name="storefront-outline"
+                size={14}
+                color={form.bodega_id === b.id ? colors.primary : colors.textMuted}
+              />
+              <Text
+                style={[
+                  styles.bodegaChipText,
+                  form.bodega_id === b.id && { color: colors.primary, fontWeight: "700" },
+                ]}
+              >
+                {b.nombre}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         <Btn
           title="Crear técnico"
           onPress={onSave}
@@ -296,4 +350,28 @@ const styles = StyleSheet.create({
   },
   emptyTxt: { color: colors.textMain, fontSize: fontSize.lg, fontWeight: "600" },
   emptySub: { color: colors.textMuted, fontSize: fontSize.sm, textAlign: "center" },
+  bodegaLabel: {
+    color: colors.textMain,
+    fontWeight: "700",
+    fontSize: fontSize.xs,
+    letterSpacing: 0.3,
+    marginTop: 4,
+  },
+  bodegaPicker: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  bodegaChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
+  bodegaChipActive: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+  },
+  bodegaChipText: { color: colors.textMuted, fontSize: fontSize.sm },
 });

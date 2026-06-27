@@ -18,6 +18,7 @@ import io
 
 from whatsapp_service import send_whatsapp, build_assignment_message
 from pdf_service import build_orden_pdf
+from suministros_module import build_router as build_suministros_router, init_suministros
 from fastapi.responses import StreamingResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -102,6 +103,7 @@ class TecnicoCreate(BaseModel):
     email: EmailStr
     telefono: str
     password: str = Field(min_length=6)
+    bodega_id: Optional[str] = None
 
 
 class TecnicoUpdate(BaseModel):
@@ -111,6 +113,7 @@ class TecnicoUpdate(BaseModel):
     email: Optional[EmailStr] = None
     telefono: Optional[str] = None
     password: Optional[str] = None
+    bodega_id: Optional[str] = None
 
 
 class ClienteCreate(BaseModel):
@@ -298,6 +301,7 @@ async def create_tecnico(payload: TecnicoCreate, _: dict = Depends(require_admin
         "telefono": payload.telefono,
         "role": "tecnico",
         "hashed_password": hash_password(payload.password),
+        "bodega_id": payload.bodega_id,
         "created_at": now_iso(),
     }
     await users_col.insert_one(new_user)
@@ -1238,6 +1242,10 @@ async def finalizar_orden(
 # Include router
 app.include_router(api_router)
 
+# Mount suministros sub-router (with /api prefix to match the main api_router)
+_sum_router = build_suministros_router(db, require_admin, get_current_user)
+app.include_router(_sum_router, prefix="/api")
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -1279,6 +1287,12 @@ async def on_startup():
             )
     except Exception as e:
         logger.warning(f"Cleanup error: {e}")
+
+    # Seed suministros catalog + bodegas + config singleton
+    try:
+        await init_suministros(db)
+    except Exception as e:
+        logger.warning(f"Suministros init error: {e}")
 
 
 @app.on_event("shutdown")

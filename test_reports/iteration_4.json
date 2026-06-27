@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 4 testing for the new Suministros (supplies) module — Phase 1 (catálogo + bodegas + solicitudes + email/WA) + Phase 2 (inventario por técnico + consumos) + tecnico bodega_id field. BACKEND: 28/28 pytest passing after I fixed one bug. FRONTEND: admin Suministros screen + tecnicos+bodega chip selector + tecnico-mobile Solicitar flow all working as specified. 🔧 FIX I APPLIED: GET /api/admin/inventario was 500ing because list_inventario projection mixed inclusion ({'nombre':1,'apellidos':1,'id':1}) with exclusion ({'_id':0,'hashed_password':0}) — Mongo error 31253. Simplified to exclusion-only projection in /app/backend/suministros_module.py line 532. After restart, endpoint returns 200 and tests pass. ⚠️ TESTID MISMATCH (non-blocking but spec drift): the review_request states the stock tab uses testID 'tab-stock', but the actual code (admin suministros.tsx line 261) uses id 'inventario' so the testID is 'tab-inventario'. All other tabs match (tab-solicitudes, tab-catalogo, tab-bodegas, tab-config). Main agent should align: either rename TAB id to 'stock' OR update the agent-to-agent context. ✅ Email send to test@test.com via Resend onboarding@resend.dev returned mode='error' (HTTP 403 - account-owner-only restriction) as expected per the request. WhatsApp to +56912345678 returned an error/no-phone result via mitiendapro (number not real), also expected. The endpoints still respond 201/200 with full email_result + whatsapp_results fields — exactly the contract documented. ✅ Admin sidebar Suministros (testID sidebar-suministros), all 5 tabs, 5 seeded products visible, Santiago bodega card with delete blocked when técnicos assigned (400), Configuración save works, FormSheets (bod-sheet, prod-sheet, stock-sheet) open CENTERED on desktop (x=440, w=560). Tecnico mobile view shows 3 tabs (Solicitar/Mi stock/Historial), can add product via picker-sheet, change urgencia, write notas, and submit. Bodega chip selector inside 'Nuevo técnico' form is rendered with 'Sin bodega' + each bodega name (Santiago).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/admin/inventario",
+        "issue": "FIXED by testing agent: pymongo OperationFailure 31253 'Cannot do inclusion on field nombre in exclusion projection'. The find_one in list_inventario mixed projection modes. Simplified to {'_id': 0, 'hashed_password': 0}. File: /app/backend/suministros_module.py line ~530-535."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Suministros admin tabs",
+        "issue": "testID for the 'Stock por técnico' tab is 'tab-inventario' (because the TAB id in code is 'inventario'), not 'tab-stock' as documented in the review_request. Either rename TABS id to 'stock' in /app/frontend/app/(admin)/suministros.tsx line 261, or update the agent-to-agent context. Functional behavior is fine.",
+        "testID": "tab-inventario",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_suministros.py",
+    "/app/test_reports/pytest/pytest_iter4.xml"
+  ],
+  "action_items": [
+    "(Optional) Rename TABS entry in /app/frontend/app/(admin)/suministros.tsx line 261 from id:'inventario' to id:'stock' to match documented testID 'tab-stock'. This is the only deviation from the spec.",
+    "Verified fix on suministros_module.py:530-535 (mixed projection). No further backend action needed.",
+    "Note: console emits 'shadow*' style props deprecated warning on every screen — pre-existing across the app (RN web), not caused by this iteration."
+  ],
+  "critical_code_review_comments": [
+    "suministros_module.py is ~676 lines (close to the 700-line guideline). Consider splitting into productos.py / bodegas.py / solicitudes.py / inventario.py if it grows further.",
+    "Good pattern: all endpoints use {'_id': 0} projection so MongoDB ObjectId never leaks to JSON.",
+    "init_suministros() is idempotent (count_documents check) — safe to run on every startup. Also the suministros_config singleton fallback in get_config() is a nice defensive pattern.",
+    "create_solicitud, reenviar_solicitud and create_consumo all swallow upstream notification failures gracefully — endpoint never 5xx for that reason. Good.",
+    "Solicitud notification block (lines 339-403) is duplicated almost verbatim inside reenviar_solicitud (lines 462-518). Extract into a helper _send_notifications(sol, tec, cfg, *, reenvio: bool) to DRY up ~80 lines.",
+    "delete_bodega correctly blocks if any user has bodega_id assigned — good FK-safety pattern in MongoDB.",
+    "Negative-stock allow + warn pattern in create_consumo is reasonable but consider returning a 200 with a top-level 'has_warnings' flag so the UI can show a banner.",
+    "POST /api/tecnico/consumos does NOT verify that orden_id exists in the ordenes collection. Currently any string is accepted. For production, add a check or document this intentional looseness."
+  ],
+  "updated_files": [
+    "/app/backend/suministros_module.py (fix: removed inclusion fields from exclusion projection in list_inventario)",
+    "/app/backend/tests/test_suministros.py (new — 28 tests)"
+  ],
+  "success_rate": {"backend": "100% (28/28 after 1 fix)", "frontend": "95% (1 minor testID naming mismatch; all functional flows pass on desktop+mobile)"},
+  "seed_data_creation": "Tests created: (a) one fresh TEST_sumtec_<uuid>@mvg.cl tecnico WITH bodega_id, (b) one TEST_uitec_<uuid>@mvg.cl tecnico via UI playwright pre-call for mobile testing, (c) one TEST_Valpo_<hex> bodega (deleted after assertion), (d) 1 solicitud + 1 consumo + 1 inventario row attached to the SUM tecnico. Suministros config was updated to emails=['sum_test@mvg.cl'] / phones=['56912345678'] for notification path coverage. Tecnico rows remain in the DB; main agent may clean them up if desired.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Suministros tests live at /app/backend/tests/test_suministros.py (28 tests, 7s). They depend on conftest.py from /app/backend/tests for admin_token. Run: pytest backend/tests/test_suministros.py -v. The Resend onboarding@resend.dev sender only delivers to the resend account owner; arbitrary 'to' addresses return HTTP 403 with mode='error' — tests accept this. mitiendapro WhatsApp bot returns 500 for non-real numbers — also accepted. The TAB id for Stock por técnico in the admin Suministros screen is 'inventario' not 'stock' (testID = tab-inventario) — main agent should fix to match docs. The tecnico mobile screen at /(tecnico)/suministros uses tab ids 'solicitar' / 'stock' / 'historial' which DO match the docs.",
+  "rca_of_issue": "Bug RCA: GET /api/admin/inventario raised pymongo.errors.OperationFailure code 31253 ('Cannot do inclusion on field nombre in exclusion projection'). MongoDB requires a projection to be EITHER all-inclusion ({field:1}) OR all-exclusion ({field:0}) — you cannot mix the two (with _id as the only exception). The code in suministros_module.py:list_inventario passed {'_id':0,'hashed_password':0,'nombre':1,'apellidos':1,'id':1}. FIX: removed the inclusion fields and kept only {'_id':0,'hashed_password':0} which still excludes the sensitive hashed_password while returning everything else. Verified by pytest and frontend reload."
+}

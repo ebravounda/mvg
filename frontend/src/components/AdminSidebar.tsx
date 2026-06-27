@@ -11,6 +11,7 @@ const NAV: { label: string; icon: any; route: string; match: string[] }[] = [
   { label: "Clientes", icon: "business-outline", route: "/(admin)/clientes", match: ["/clientes", "/(admin)/clientes"] },
   { label: "Comercios", icon: "storefront-outline", route: "/(admin)/comercios", match: ["/comercios", "/(admin)/comercios"] },
   { label: "Técnicos", icon: "people-outline", route: "/(admin)/tecnicos", match: ["/tecnicos", "/(admin)/tecnicos"] },
+  { label: "Suministros", icon: "cube-outline", route: "/(admin)/suministros", match: ["/suministros", "/(admin)/suministros"] },
 ];
 
 export const SIDEBAR_WIDTH = 256;
