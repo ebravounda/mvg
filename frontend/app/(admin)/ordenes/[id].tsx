@@ -8,6 +8,7 @@ import {
   Image,
   TouchableOpacity,
   Linking,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
@@ -92,6 +93,7 @@ export default function OrdenDetalle() {
   };
 
   const [reenviando, setReenviando] = useState(false);
+  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const onReenviarWhatsApp = async () => {
     if (reenviando) return;
     if (typeof window !== "undefined") {
@@ -232,11 +234,21 @@ export default function OrdenDetalle() {
                     </Text>
                   ) : null}
                   {pp.completed && pp.evidencia_base64 ? (
-                    <Image
-                      source={{ uri: pp.evidencia_base64 }}
-                      style={styles.ppThumb}
-                      resizeMode="cover"
-                    />
+                    <TouchableOpacity
+                      onPress={() => setLightboxUri(pp.evidencia_base64)}
+                      activeOpacity={0.8}
+                      testID={`pp-foto-${pp.id}`}
+                    >
+                      <Image
+                        source={{ uri: pp.evidencia_base64 }}
+                        style={styles.ppThumb}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.ppExpandHint}>
+                        <Ionicons name="expand-outline" size={12} color="#fff" />
+                        <Text style={styles.ppExpandTxt}>Ver tamaño completo</Text>
+                      </View>
+                    </TouchableOpacity>
                   ) : null}
                   {pp.notas ? <Text style={styles.ppNotas}>📝 {pp.notas}</Text> : null}
                   {pp.completed && (
@@ -523,6 +535,38 @@ export default function OrdenDetalle() {
           icon={<Ionicons name="logo-whatsapp" size={18} color="#fff" />}
         />
       </FormSheet>
+
+      {/* Photo Lightbox - vista a tamaño completo */}
+      <Modal
+        visible={!!lightboxUri}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLightboxUri(null)}
+      >
+        <TouchableOpacity
+          style={styles.lightboxBg}
+          activeOpacity={1}
+          onPress={() => setLightboxUri(null)}
+        >
+          <View style={styles.lightboxHeader}>
+            <TouchableOpacity
+              onPress={() => setLightboxUri(null)}
+              style={styles.lightboxClose}
+              testID="lightbox-close"
+            >
+              <Ionicons name="close" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          {lightboxUri && (
+            <Image
+              source={{ uri: lightboxUri }}
+              style={styles.lightboxImg}
+              resizeMode="contain"
+            />
+          )}
+        </TouchableOpacity>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -728,6 +772,44 @@ const styles = StyleSheet.create({
     marginTop: 4,
     backgroundColor: colors.surface,
   },
+  ppExpandHint: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  ppExpandTxt: { color: "#fff", fontSize: 10, fontWeight: "600" },
+  lightboxBg: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lightboxHeader: {
+    position: "absolute",
+    top: 40,
+    right: 20,
+    zIndex: 2,
+  },
+  lightboxClose: {
+    width: 44,
+    height: 44,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lightboxImg: {
+    width: "100%",
+    height: "100%",
+  },
+
   waResendBtn: {
     height: 48,
     borderRadius: radius.md,

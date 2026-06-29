@@ -1651,6 +1651,9 @@ async def update_pinpad(
             raise
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
     return await enrich_orden(o)
+
+
+@api_router.patch("/tecnico/ordenes/{orden_id}/finalizar")
 async def finalizar_orden(
     orden_id: str, payload: OrdenFinalizar, tec: dict = Depends(require_tecnico)
 ):
