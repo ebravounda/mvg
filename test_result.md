@@ -101,3 +101,142 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Sistema MVG Computación (PWA/Expo) para gestión de órdenes de servicio.
+  En esta iteración: completar el flujo de Asignación Masiva MANUAL en el Admin
+  panel — el administrador marca múltiples órdenes con checkboxes, abre un
+  modal para elegir un técnico y las asigna en lote.
+
+backend:
+  - task: "POST /api/admin/ordenes/asignar-bulk (Asignación masiva manual)"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Endpoint ya existía. Acepta payload {orden_ids: [string], tecnico_id: string}.
+          Asigna las órdenes seleccionadas a un único técnico específico, valida la
+          existencia del técnico, hace update_many en MongoDB y dispara WhatsApp
+          por cada orden. Retorna {asignadas, whatsapps_enviados, tecnico}.
+          REQUIERE TEST: enviar 2-3 orden_ids con un tecnico_id válido y verificar
+          la respuesta + persistencia en DB.
+
+  - task: "POST /api/admin/ordenes/asignar-masivo (Auto-distribución por cercanía)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Endpoint ya funcionaba en sesión anterior. Sin cambios en lógica.
+
+  - task: "GET /api/tecnico/ruta (Ordenamiento por comuna/región/dirección)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Endpoint ya existe. Calcula ruta priorizando comuna del técnico,
+          luego región, dirección y proximidad. Sin cambios en esta iteración.
+
+frontend:
+  - task: "UI Asignación Masiva Manual en /(admin)/ordenes"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(admin)/ordenes/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Implementado el flujo completo:
+          - Botón "Seleccionar" en header (también opción dentro del FormSheet de Nueva Orden)
+          - Modo selección activa checkboxes en cada tarjeta/fila (mobile FlatList + desktop table)
+          - Soporte long-press para activar modo selección en móvil
+          - Barra inferior pegajosa muestra count + botón "Asignar"
+          - Botón "Todas" para seleccionar todas las visibles
+          - Modal FormSheet abre con Select de técnico + botón "Asignar N órdenes"
+          - Llama POST /admin/ordenes/asignar-bulk con orden_ids + tecnico_id
+          - Resaltado visual de filas seleccionadas (border + background primary)
+          - Toast de éxito/error + recarga lista tras éxito
+          Verificado visualmente con screenshots. Pendiente test funcional end-to-end.
+
+  - task: "Deep links Waze + Google Maps en /(tecnico)/ruta"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tecnico)/ruta.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Ya estaba implementado en sesión anterior. Botones "Waze" y "Google Maps"
+          por cada punto de la ruta usando Linking.openURL con universal links
+          (https://waze.com/ul?q=... y https://www.google.com/maps/search/...).
+          Sin cambios en esta iteración — solo se confirmó funcionamiento.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "POST /api/admin/ordenes/asignar-bulk (Asignación masiva manual)"
+    - "UI Asignación Masiva Manual en /(admin)/ordenes"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Sesión retomada. Completé la UI de Asignación Masiva Manual que quedó a medias
+      en la sesión anterior. Detalles importantes:
+      
+      1) El endpoint backend correcto es POST /api/admin/ordenes/asignar-bulk
+         (NO /asignar-masivo, ese es para autodistribución por cercanía).
+         Payload: { orden_ids: ["id1","id2"], tecnico_id: "uuid" }
+      
+      2) Corrí el flujo visualmente en desktop (1440x900) y todo se ve correcto:
+         - Botón "Seleccionar" en header activa modo selección
+         - Checkboxes aparecen en filas
+         - Click en filas las marca (resaltado azul)
+         - Barra inferior con "N seleccionadas" + botón "Asignar"
+         - Modal abre con lista de técnicos
+         - Botón "Asignar 2 órdenes" gatilla POST
+      
+      3) Credenciales admin: admin@mvg.cl / Admin123!
+      
+      PRUEBAS REQUERIDAS (testing_agent):
+      - Backend: probar /api/admin/ordenes/asignar-bulk con payload válido (2-3 órdenes
+        pendientes existentes + un tecnico_id válido). Verificar respuesta y que las
+        órdenes queden con tecnico_id en DB.
+      - Backend edge cases: orden_ids vacío (debe devolver 400), tecnico_id inexistente
+        (debe devolver 404).
+      - Frontend: login admin → /(admin)/ordenes → click "Seleccionar" → click 2 filas
+        → click "Asignar" → seleccionar técnico → confirmar → verificar toast de éxito
+        y que las órdenes muestren ese técnico al recargar.
+      - Frontend: verificar que en modo selección, click en una fila NO navega al
+        detalle de orden sino que la marca/desmarca.
+

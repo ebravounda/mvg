@@ -76,6 +76,14 @@ export default function OrdenesList() {
   // Actions menu
   const [actionsOpen, setActionsOpen] = useState(false);
 
+  // Selection mode states (functions defined after `filteredItems` below)
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pickerTecOpen, setPickerTecOpen] = useState(false);
+  const [bulkTec, setBulkTec] = useState<string>("");
+  const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [autoMasivoLoading, setAutoMasivoLoading] = useState(false);
+
   const load = useCallback(async () => {
     try {
       let url = "/admin/ordenes";
@@ -157,6 +165,73 @@ export default function OrdenesList() {
     });
     return sorted;
   }, [items, query, sortBy]);
+
+  // ---------- Selection mode handlers ----------
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const enterSelectionMode = useCallback(async () => {
+    setSelectionMode(true);
+    setSelectedIds(new Set());
+    setBulkTec("");
+    if (tecnicos.length === 0) {
+      try {
+        const t = await api.get("/admin/tecnicos");
+        setTecnicos(t.data);
+      } catch (e) {
+        console.log("load tecnicos err", e);
+      }
+    }
+  }, [tecnicos.length]);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setBulkTec("");
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      filteredItems.forEach((o) => next.add(o.id));
+      return next;
+    });
+  }, [filteredItems]);
+
+  const handleBulkAssign = useCallback(async () => {
+    if (selectedIds.size === 0) {
+      showToast("Selecciona al menos una orden", "error");
+      return;
+    }
+    if (!bulkTec) {
+      showToast("Selecciona un técnico", "error");
+      return;
+    }
+    setBulkAssigning(true);
+    try {
+      const r = await api.post("/admin/ordenes/asignar-bulk", {
+        orden_ids: Array.from(selectedIds),
+        tecnico_id: bulkTec,
+      });
+      showToast(
+        `${r.data.asignadas} órdenes asignadas a ${r.data.tecnico}`,
+        "success"
+      );
+      setPickerTecOpen(false);
+      exitSelectionMode();
+      load();
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error al asignar", "error");
+    } finally {
+      setBulkAssigning(false);
+    }
+  }, [selectedIds, bulkTec, exitSelectionMode, load]);
 
   const openCreate = async () => {
     setActionsOpen(false);
@@ -295,27 +370,70 @@ export default function OrdenesList() {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <StickyHeader
-        title="Órdenes"
-        subtitle="Gestiona y asigna órdenes de servicio"
+        title={selectionMode ? `${selectedIds.size} seleccionada${selectedIds.size === 1 ? "" : "s"}` : "Órdenes"}
+        subtitle={selectionMode ? "Toca órdenes para seleccionar" : "Gestiona y asigna órdenes de servicio"}
         rightSlot={
-          isDesktop ? (
-            <TouchableOpacity
-              testID="abrir-acciones-btn"
-              onPress={() => setActionsOpen(true)}
-              style={styles.headerCtaDesktop}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={styles.headerCtaText}>Nueva orden</Text>
-            </TouchableOpacity>
+          selectionMode ? (
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              {isDesktop && (
+                <TouchableOpacity
+                  testID="seleccionar-todo-btn"
+                  onPress={selectAllVisible}
+                  style={styles.headerSecondary}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="checkbox-outline" size={16} color={colors.primary} />
+                  <Text style={styles.headerSecondaryText}>Todas</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                testID="cancelar-seleccion-btn"
+                onPress={exitSelectionMode}
+                style={isDesktop ? styles.headerSecondary : styles.headerCta}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="close" size={isDesktop ? 16 : 20} color={isDesktop ? colors.textMain : "#fff"} />
+                {isDesktop && <Text style={styles.headerSecondaryText}>Cancelar</Text>}
+              </TouchableOpacity>
+            </View>
+          ) : isDesktop ? (
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+              <TouchableOpacity
+                testID="iniciar-seleccion-btn"
+                onPress={enterSelectionMode}
+                style={styles.headerSecondary}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="checkbox-outline" size={16} color={colors.primary} />
+                <Text style={styles.headerSecondaryText}>Seleccionar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="abrir-acciones-btn"
+                onPress={() => setActionsOpen(true)}
+                style={styles.headerCtaDesktop}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.headerCtaText}>Nueva orden</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <TouchableOpacity
-              testID="abrir-acciones-btn"
-              onPress={() => setActionsOpen(true)}
-              style={styles.headerCta}
-            >
-              <Ionicons name="add" size={20} color="#fff" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TouchableOpacity
+                testID="iniciar-seleccion-btn"
+                onPress={enterSelectionMode}
+                style={[styles.headerCta, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]}
+              >
+                <Ionicons name="checkbox-outline" size={20} color={colors.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="abrir-acciones-btn"
+                onPress={() => setActionsOpen(true)}
+                style={styles.headerCta}
+              >
+                <Ionicons name="add" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
           )
         }
       />
@@ -547,10 +665,47 @@ export default function OrdenesList() {
                   style={[
                     styles.tableRow,
                     idx === filteredItems.length - 1 && { borderBottomWidth: 0 },
+                    selectedIds.has(o.id) && { backgroundColor: colors.primarySoft },
                   ]}
-                  onPress={() => router.push(`/(admin)/ordenes/${o.id}`)}
+                  onPress={() => {
+                    if (selectionMode) {
+                      toggleSelect(o.id);
+                    } else {
+                      router.push(`/(admin)/ordenes/${o.id}`);
+                    }
+                  }}
+                  onLongPress={() => {
+                    if (!selectionMode) {
+                      enterSelectionMode();
+                      toggleSelect(o.id);
+                    }
+                  }}
                   activeOpacity={0.6}
                 >
+                  {selectionMode && (
+                    <View
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 6,
+                        borderWidth: 2,
+                        borderColor: selectedIds.has(o.id)
+                          ? colors.primary
+                          : colors.border,
+                        backgroundColor: selectedIds.has(o.id)
+                          ? colors.primary
+                          : "#fff",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        marginRight: 10,
+                      }}
+                      testID={`select-check-${o.id}`}
+                    >
+                      {selectedIds.has(o.id) && (
+                        <Ionicons name="checkmark" size={16} color="#fff" />
+                      )}
+                    </View>
+                  )}
                   <View style={{ flex: 1.1 }}>
                     <Text style={styles.tdNumero}>{o.numero}</Text>
                   </View>
@@ -638,11 +793,50 @@ export default function OrdenesList() {
           renderItem={({ item: o }) => (
             <TouchableOpacity
               testID={`orden-card-${o.id}`}
-              style={styles.card}
-              onPress={() => router.push(`/(admin)/ordenes/${o.id}`)}
+              style={[
+                styles.card,
+                selectionMode && selectedIds.has(o.id) && {
+                  borderColor: colors.primary,
+                  backgroundColor: colors.primarySoft,
+                },
+              ]}
+              onPress={() => {
+                if (selectionMode) {
+                  toggleSelect(o.id);
+                } else {
+                  router.push(`/(admin)/ordenes/${o.id}`);
+                }
+              }}
+              onLongPress={() => {
+                if (!selectionMode) {
+                  enterSelectionMode();
+                  toggleSelect(o.id);
+                }
+              }}
             >
               <View style={styles.cardHead}>
-                <Text style={styles.numero}>{o.numero}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                  {selectionMode && (
+                    <View
+                      testID={`select-check-m-${o.id}`}
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        borderWidth: 2,
+                        borderColor: selectedIds.has(o.id) ? colors.primary : colors.border,
+                        backgroundColor: selectedIds.has(o.id) ? colors.primary : "#fff",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {selectedIds.has(o.id) && (
+                        <Ionicons name="checkmark" size={14} color="#fff" />
+                      )}
+                    </View>
+                  )}
+                  <Text style={styles.numero}>{o.numero}</Text>
+                </View>
                 <StatusBadge status={o.estado} />
               </View>
               <Text style={styles.titulo} numberOfLines={1}>
@@ -744,13 +938,38 @@ export default function OrdenesList() {
           </View>
           <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
         </TouchableOpacity>
-      </FormSheet>
+
+        <TouchableOpacity
+          testID="accion-seleccionar-asignar"
+          style={styles.actionItem}
+          onPress={() => {
+            setActionsOpen(false);
+            enterSelectionMode();
+          }}
+        >
+          <View
+            style={[
+              styles.actionIcon,
+              { backgroundColor: `${colors.primary}22` },
+            ]}
+          >
+            <Ionicons name="checkbox" size={24} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.actionTitle}>Seleccionar y asignar</Text>
+            <Text style={styles.actionSub}>
+              Marca varias órdenes y asígnalas a un técnico
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
 
         <TouchableOpacity
           testID="accion-asignar-masivo"
           style={styles.actionItem}
           onPress={async () => {
             setActionsOpen(false);
+            setAutoMasivoLoading(true);
             try {
               const r = await api.post("/admin/ordenes/asignar-masivo", {
                 max_por_tecnico: 25,
@@ -762,9 +981,11 @@ export default function OrdenesList() {
               load();
             } catch (e: any) {
               showToast(
-                e?.response?.data?.detail || "Error en asignación masiva",
+                e?.response?.data?.detail || "Error en asignación automática",
                 "error"
               );
+            } finally {
+              setAutoMasivoLoading(false);
             }
           }}
         >
@@ -777,13 +998,18 @@ export default function OrdenesList() {
             <Ionicons name="people" size={24} color={colors.completed} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.actionTitle}>Asignar masivamente</Text>
+            <Text style={styles.actionTitle}>Asignación automática</Text>
             <Text style={styles.actionSub}>
-              Distribuye órdenes pendientes a técnicos según cercanía (máx 25/téc)
+              Distribuye órdenes pendientes según cercanía por comuna (máx 25/téc)
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          {autoMasivoLoading ? (
+            <ActivityIndicator color={colors.completed} size="small" />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+          )}
         </TouchableOpacity>
+      </FormSheet>
 
 
       {/* Upload Excel sheet */}
@@ -959,6 +1185,86 @@ export default function OrdenesList() {
           testID="orden-crear-submit"
         />
       </FormSheet>
+
+      {/* Sheet: elegir técnico para asignación masiva */}
+      <FormSheet
+        visible={pickerTecOpen}
+        onClose={() => !bulkAssigning && setPickerTecOpen(false)}
+        title={`Asignar ${selectedIds.size} ${selectedIds.size === 1 ? "orden" : "órdenes"}`}
+        testID="picker-tecnico-sheet"
+      >
+        <Text style={styles.help}>
+          Selecciona el técnico al que se asignarán las {selectedIds.size}{" "}
+          órdenes seleccionadas. Se enviará una notificación por WhatsApp al
+          técnico.
+        </Text>
+        <Select
+          label="Técnico destino *"
+          value={bulkTec}
+          onChange={setBulkTec}
+          options={tecnicos.map((t) => ({
+            label: `${t.nombre} ${t.apellidos}${t.comuna ? ` · ${t.comuna}` : ""}`,
+            value: t.id,
+          }))}
+          testID="bulk-tecnico-select"
+        />
+        <Btn
+          title={`Asignar ${selectedIds.size} órdenes`}
+          onPress={handleBulkAssign}
+          loading={bulkAssigning}
+          disabled={!bulkTec || selectedIds.size === 0}
+          testID="bulk-asignar-submit"
+          icon={<Ionicons name="checkmark-circle" size={18} color="#fff" />}
+        />
+      </FormSheet>
+
+      {/* Sticky bottom bar para selección masiva */}
+      {selectionMode && (
+        <View style={styles.selectionBar} testID="selection-bar">
+          <View style={{ flex: 1 }}>
+            <Text style={styles.selectionCount}>
+              {selectedIds.size}{" "}
+              {selectedIds.size === 1 ? "orden seleccionada" : "órdenes seleccionadas"}
+            </Text>
+            <Text style={styles.selectionHint}>
+              {selectedIds.size === 0
+                ? "Toca las órdenes para seleccionar"
+                : "Pulsa Asignar para continuar"}
+            </Text>
+          </View>
+          {!isDesktop && (
+            <TouchableOpacity
+              testID="seleccionar-todo-m-btn"
+              onPress={selectAllVisible}
+              style={styles.selectionAllBtn}
+            >
+              <Ionicons name="checkmark-done" size={16} color={colors.primary} />
+              <Text style={{ color: colors.primary, fontWeight: "700", fontSize: 12 }}>
+                Todas
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            testID="bulk-asignar-abrir-picker"
+            onPress={() => {
+              if (selectedIds.size === 0) {
+                showToast("Selecciona al menos una orden", "error");
+                return;
+              }
+              setBulkTec("");
+              setPickerTecOpen(true);
+            }}
+            style={[
+              styles.selectionPrimary,
+              selectedIds.size === 0 && { opacity: 0.5 },
+            ]}
+            disabled={selectedIds.size === 0}
+          >
+            <Ionicons name="person-add" size={16} color="#fff" />
+            <Text style={styles.selectionPrimaryText}>Asignar</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -1187,5 +1493,71 @@ const styles = StyleSheet.create({
   tdCC: { color: colors.textMain, fontWeight: "700", fontSize: fontSize.sm },
   tdTec: { color: colors.textMain, fontSize: fontSize.sm },
   tableEmpty: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
-  emptyTxt: { color: colors.textMuted, fontSize: fontSize.md },
+
+  // Header secondary button (Seleccionar / Cancelar)
+  headerSecondary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+  },
+  headerSecondaryText: {
+    color: colors.textMain,
+    fontWeight: "700",
+    fontSize: fontSize.xs,
+  },
+
+  // Selection bar (bottom sticky)
+  selectionBar: {
+    position: "absolute",
+    left: spacing.lg,
+    right: spacing.lg,
+    bottom: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    ...shadow.lg,
+  },
+  selectionCount: {
+    color: colors.textMain,
+    fontWeight: "800",
+    fontSize: fontSize.sm,
+  },
+  selectionHint: {
+    color: colors.textMuted,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
+  selectionAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  selectionPrimary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  selectionPrimaryText: { color: "#fff", fontWeight: "800", fontSize: fontSize.sm },
 });

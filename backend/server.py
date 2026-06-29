@@ -2097,13 +2097,43 @@ async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
 
     enriched = [await enrich_orden(o) for o in ordenes]
 
-    # Nearest-neighbor por comuna (origen = comuna del técnico)
-    if tec_comuna:
-        def comuna_of(o):
-            suc = o.get("sucursal") or {}
-            return suc.get("comuna") or ""
-        # Primer pase: misma comuna primero
-        enriched.sort(key=lambda o: (_comuna_match_score(tec_comuna, comuna_of(o)), comuna_of(o)))
+    # Sort: priority by (comuna match → region match → dirección cercana al domicilio)
+    tec_direccion = (tec.get("direccion") or "").strip().lower()
+
+    def comuna_of(o):
+        suc = o.get("sucursal") or {}
+        return (suc.get("comuna") or "").strip()
+
+    def region_of(o):
+        suc = o.get("sucursal") or {}
+        return (suc.get("region") or "").strip()
+
+    def direccion_of(o):
+        suc = o.get("sucursal") or {}
+        return (suc.get("direccion") or "").strip().lower()
+
+    def address_proximity_score(o):
+        """Score más bajo = más cerca del domicilio del técnico.
+        Heurística: cantidad de palabras de la dirección del técnico
+        que coinciden con la dirección de la sucursal."""
+        if not tec_direccion:
+            return 100
+        dir_orden = direccion_of(o)
+        if not dir_orden:
+            return 99
+        tokens = [w for w in tec_direccion.split() if len(w) >= 3]
+        matches = sum(1 for t in tokens if t in dir_orden)
+        return 50 - matches  # menos = mejor
+
+    if tec_comuna or tec_direccion:
+        enriched.sort(
+            key=lambda o: (
+                _comuna_match_score(tec_comuna, comuna_of(o)),
+                address_proximity_score(o),
+                region_of(o),
+                direccion_of(o),
+            )
+        )
 
     # Limit 25 (tope diario)
     MAX_ORDERS_DAY = 25
@@ -2139,6 +2169,42 @@ async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
 
 
 # ----------------- Asignación masiva (admin) -----------------
+
+class AsignacionBulkPayload(BaseModel):
+    orden_ids: List[str]
+    tecnico_id: str
+
+
+@api_router.post("/admin/ordenes/asignar-bulk")
+async def asignacion_bulk(
+    payload: AsignacionBulkPayload, _: dict = Depends(require_admin)
+):
+    """Asigna explícitamente N órdenes seleccionadas a UN técnico específico."""
+    if not payload.orden_ids:
+        raise HTTPException(status_code=400, detail="Selecciona al menos 1 orden")
+    tec = await users_col.find_one(
+        {"id": payload.tecnico_id, "role": "tecnico"}, {"_id": 0}
+    )
+    if not tec:
+        raise HTTPException(status_code=404, detail="Técnico no encontrado")
+    result = await ordenes_col.update_many(
+        {"id": {"$in": payload.orden_ids}},
+        {"$set": {"tecnico_id": payload.tecnico_id}},
+    )
+    # Enviar WhatsApp por cada orden (best-effort)
+    enviados = 0
+    for oid in payload.orden_ids:
+        try:
+            await _send_assignment_whatsapp(oid)
+            enviados += 1
+        except Exception as e:
+            logger.warning("[asignacion_bulk] WhatsApp orden=%s err=%s", oid, e)
+    return {
+        "asignadas": result.modified_count,
+        "whatsapps_enviados": enviados,
+        "tecnico": f"{tec.get('nombre','')} {tec.get('apellidos','')}".strip(),
+    }
+
 
 class AsignacionMasivaPayload(BaseModel):
     orden_ids: Optional[List[str]] = None  # Si null → todas las pendientes sin asignar
