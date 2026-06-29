@@ -26,6 +26,10 @@ interface Stats {
   finalizadas: number;
   total_clientes: number;
   total_tecnicos: number;
+  pin_pads_pendientes?: number;
+  tecnicos_necesarios?: number;
+  horas_totales_estimadas?: number;
+  reagendadas?: number;
 }
 
 export default function Dashboard() {
@@ -37,6 +41,55 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  const [settings, setSettings] = useState<any>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const r = await api.get("/admin/settings");
+      setSettings(r.data);
+    } catch {}
+  }, []);
+
+  const toggleAutoAssign = async () => {
+    if (!settings || savingSettings) return;
+    setSavingSettings(true);
+    try {
+      const newVal = !settings.auto_asignacion_masiva;
+      const r = await api.put("/admin/settings", {
+        auto_asignacion_masiva: newVal,
+      });
+      setSettings(r.data);
+      showToast(
+        newVal
+          ? "Auto-asignación ACTIVADA — las nuevas órdenes se asignarán automáticamente"
+          : "Auto-asignación DESACTIVADA",
+        "success"
+      );
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const runMassiveAssign = async () => {
+    if (savingSettings) return;
+    setSavingSettings(true);
+    try {
+      const r = await api.post("/admin/ordenes/asignar-masivo", {
+        max_por_tecnico: settings?.max_ordenes_tecnico_dia || 25,
+      });
+      showToast(
+        `${r.data.asignadas} órdenes asignadas masivamente`,
+        "success"
+      );
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const onCleanup = async () => {
     if (cleaning) return;
@@ -66,13 +119,14 @@ export default function Dashboard() {
       ]);
       setStats(s.data);
       setOrdenes(o.data.slice(0, 6));
+      loadSettings();
     } catch (e) {
       console.log("dashboard error", e);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadSettings]);
 
   useFocusEffect(
     useCallback(() => {
@@ -207,6 +261,80 @@ export default function Dashboard() {
                 testID="kpi-total"
                 isDesktop={isDesktop}
               />
+            </View>
+
+            {/* Planning capacity panel + auto-assign toggle */}
+            <View style={styles.planningCard}>
+              <View style={styles.planningHead}>
+                <Ionicons name="people-circle" size={24} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.planningTitle}>Planificación diaria</Text>
+                  <Text style={styles.planningSub}>
+                    {stats?.tecnicos_necesarios
+                      ? `Necesitas ~${stats.tecnicos_necesarios} técnico${stats.tecnicos_necesarios !== 1 ? "s" : ""} hoy`
+                      : "Sin órdenes pendientes hoy"}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.planningGrid}>
+                <View style={styles.planningCell}>
+                  <Text style={styles.planningCellLbl}>Pin Pads pendientes</Text>
+                  <Text style={styles.planningCellVal}>
+                    {stats?.pin_pads_pendientes || 0}
+                  </Text>
+                </View>
+                <View style={styles.planningCell}>
+                  <Text style={styles.planningCellLbl}>Técnicos necesarios</Text>
+                  <Text style={[styles.planningCellVal, { color: colors.accent }]}>
+                    {stats?.tecnicos_necesarios || 0}
+                  </Text>
+                </View>
+                <View style={styles.planningCell}>
+                  <Text style={styles.planningCellLbl}>Horas estimadas</Text>
+                  <Text style={styles.planningCellVal}>
+                    {stats?.horas_totales_estimadas || 0}h
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleTitle}>Auto-asignación masiva</Text>
+                  <Text style={styles.toggleSub}>
+                    {settings?.auto_asignacion_masiva
+                      ? "✅ Las nuevas órdenes se asignan automáticamente al técnico más cercano"
+                      : "Al subir un Excel o crear órdenes, NO se asignarán solas"}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  testID="toggle-auto-asign"
+                  onPress={toggleAutoAssign}
+                  disabled={!settings || savingSettings}
+                  style={[
+                    styles.switchTrack,
+                    settings?.auto_asignacion_masiva && styles.switchTrackOn,
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      settings?.auto_asignacion_masiva && styles.switchThumbOn,
+                    ]}
+                  />
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                testID="run-massive-assign"
+                onPress={runMassiveAssign}
+                disabled={savingSettings}
+                style={styles.massiveBtn}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="rocket" size={16} color="#fff" />
+                <Text style={styles.massiveBtnText}>
+                  {savingSettings ? "Asignando..." : "Asignar masivamente AHORA"}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {/* Secondary row: progress + counts */}
@@ -451,6 +579,69 @@ const QuickCard: React.FC<{
 );
 
 const styles = StyleSheet.create({
+  planningCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.md,
+  },
+  planningHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  planningTitle: { color: colors.textMain, fontWeight: "800", fontSize: fontSize.md },
+  planningSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+  planningGrid: { flexDirection: "row", gap: spacing.sm },
+  planningCell: {
+    flex: 1,
+    backgroundColor: colors.primarySoft,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    alignItems: "center",
+  },
+  planningCellLbl: { color: colors.textMuted, fontSize: 10, textTransform: "uppercase" },
+  planningCellVal: { color: colors.primary, fontSize: 22, fontWeight: "800", marginTop: 2 },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    gap: spacing.md,
+  },
+  toggleTitle: { color: colors.textMain, fontWeight: "800", fontSize: fontSize.sm },
+  toggleSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 4 },
+  switchTrack: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.border,
+    padding: 2,
+    justifyContent: "center",
+  },
+  switchTrackOn: { backgroundColor: colors.completed },
+  switchThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#fff",
+  },
+  switchThumbOn: { transform: [{ translateX: 22 }] },
+  massiveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: colors.accent,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+  },
+  massiveBtnText: { color: "#fff", fontWeight: "800", fontSize: fontSize.sm },
+
   safe: { flex: 1, backgroundColor: colors.background },
   scroll: { paddingBottom: 80 },
 

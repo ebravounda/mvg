@@ -819,6 +819,112 @@ async def reenviar_whatsapp(orden_id: str, _: dict = Depends(require_admin)):
     return {"orden": enriched, "whatsapp": wa}
 
 
+
+# ----------------- Settings (config) -----------------
+
+settings_col = db.app_settings
+
+DEFAULT_SETTINGS = {
+    "auto_asignacion_masiva": False,
+    "max_ordenes_tecnico_dia": 25,
+    "minutos_por_pinpad": 10,
+}
+
+
+async def _get_settings() -> dict:
+    s = await settings_col.find_one({"_id": "main"}, {"_id": 0})
+    if not s:
+        await settings_col.insert_one({"_id": "main", **DEFAULT_SETTINGS})
+        return DEFAULT_SETTINGS.copy()
+    return {**DEFAULT_SETTINGS, **s}
+
+
+@api_router.get("/admin/settings")
+async def get_settings(_: dict = Depends(require_admin)):
+    return await _get_settings()
+
+
+class SettingsUpdate(BaseModel):
+    auto_asignacion_masiva: Optional[bool] = None
+    max_ordenes_tecnico_dia: Optional[int] = None
+    minutos_por_pinpad: Optional[int] = None
+
+
+@api_router.put("/admin/settings")
+async def update_settings(
+    payload: SettingsUpdate, _: dict = Depends(require_admin)
+):
+    upd = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not upd:
+        return await _get_settings()
+    await settings_col.update_one(
+        {"_id": "main"}, {"$set": upd}, upsert=True
+    )
+    return await _get_settings()
+
+
+async def _auto_assign_if_enabled() -> dict:
+    """Si la auto-asignación está ON, distribuye órdenes pendientes sin
+    técnico a técnicos cercanos. Best-effort: nunca falla la operación
+    que la invoca."""
+    try:
+        s = await _get_settings()
+        if not s.get("auto_asignacion_masiva"):
+            return {"enabled": False, "asignadas": 0}
+        # Reusa la lógica de asignación masiva
+        max_t = s.get("max_ordenes_tecnico_dia", 25)
+        tecnicos = await users_col.find(
+            {"role": "tecnico"}, {"_id": 0, "hashed_password": 0}
+        ).to_list(500)
+        if not tecnicos:
+            return {"enabled": True, "asignadas": 0, "motivo": "sin_tecnicos"}
+        ordenes = await ordenes_col.find(
+            {"estado": "pendiente", "tecnico_id": {"$in": [None, ""]}},
+            {"_id": 0},
+        ).to_list(2000)
+        if not ordenes:
+            return {"enabled": True, "asignadas": 0}
+        sucursal_ids = list({o.get("sucursal_id") for o in ordenes if o.get("sucursal_id")})
+        sucs_map = {}
+        if sucursal_ids:
+            sucs = await sucursales_col.find(
+                {"id": {"$in": sucursal_ids}}, {"_id": 0}
+            ).to_list(2000)
+            sucs_map = {x["id"]: x for x in sucs}
+        carga = {}
+        for t in tecnicos:
+            carga[t["id"]] = await ordenes_col.count_documents(
+                {"tecnico_id": t["id"], "estado": {"$in": ["pendiente", "en_progreso"]}}
+            )
+        asignadas = 0
+        for o in ordenes:
+            suc = sucs_map.get(o.get("sucursal_id"), {})
+            comuna_orden = (suc.get("comuna") or "").strip()
+            cands = sorted(
+                tecnicos,
+                key=lambda t: (
+                    _comuna_match_score(t.get("comuna"), comuna_orden),
+                    carga.get(t["id"], 0),
+                ),
+            )
+            elegido = next((t for t in cands if carga.get(t["id"], 0) < max_t), None)
+            if not elegido:
+                continue
+            await ordenes_col.update_one(
+                {"id": o["id"]}, {"$set": {"tecnico_id": elegido["id"]}}
+            )
+            carga[elegido["id"]] = carga.get(elegido["id"], 0) + 1
+            asignadas += 1
+            try:
+                await _send_assignment_whatsapp(o["id"])
+            except Exception:
+                pass
+        return {"enabled": True, "asignadas": asignadas}
+    except Exception as e:
+        logger.warning("[auto_assign] error: %s", e)
+        return {"enabled": False, "error": str(e)}
+
+
 @api_router.post("/admin/ordenes/upload-excel")
 async def upload_ordenes_excel(
     file: UploadFile = File(...),
@@ -1120,6 +1226,9 @@ async def upload_ordenes_excel(
             except Exception as e:
                 summary["errores"].append(f"CC {g['cc']}: {str(e)[:120]}")
 
+    # Auto-asignación masiva si está habilitada
+    auto = await _auto_assign_if_enabled()
+    summary["auto_asignacion"] = auto
     return summary
 
 
