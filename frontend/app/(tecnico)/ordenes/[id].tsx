@@ -48,6 +48,16 @@ export default function TecnicoOrdenDetalle() {
   // outside the Modal layer so they would be hidden behind it).
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [sheetInfo, setSheetInfo] = useState<string | null>(null);
+  // New DDLL modal state
+  const [addDdllOpen, setAddDdllOpen] = useState(false);
+  const [newDdll, setNewDdll] = useState("");
+  const [newSerie, setNewSerie] = useState("");
+  const [newModelo, setNewModelo] = useState("");
+  // Reagendar modal state
+  const [reagendarOpen, setReagendarOpen] = useState(false);
+  const [reagendarMotivo, setReagendarMotivo] = useState("");
+  const [reagendarNota, setReagendarNota] = useState("");
+  const [reagendarFecha, setReagendarFecha] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -331,6 +341,85 @@ export default function TecnicoOrdenDetalle() {
     }
   };
 
+  // ----- Add new DDLL (extra pin pad) -----
+  const confirmarAddDdll = async () => {
+    if (!newDdll.trim()) {
+      showToast("Ingresa la DDLL", "error");
+      return;
+    }
+    if (!foto) {
+      showToast("Adjunta foto de evidencia primero", "error");
+      return;
+    }
+    if (materialesUsados.length === 0 && !sinSuministros) {
+      showToast(
+        'Selecciona materiales o marca "No se utilizaron suministros"',
+        "error"
+      );
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const payload: any = {
+        ddll: newDdll.trim().toUpperCase(),
+        serie: newSerie.trim() || undefined,
+        modelo: newModelo.trim() || undefined,
+        evidencia_base64: foto,
+        materiales_usados: materialesUsados.map((m) => ({
+          sku: m.sku,
+          descripcion: m.descripcion,
+          cantidad: m.cantidad,
+        })),
+        sin_suministros: sinSuministros && materialesUsados.length === 0,
+      };
+      const r = await api.post(`/tecnico/ordenes/${id}/pinpad-extra`, payload);
+      setOrden(r.data);
+      showToast("DDLL agregada y guardada ✓", "success");
+      setAddDdllOpen(false);
+      setNewDdll("");
+      setNewSerie("");
+      setNewModelo("");
+      setFoto(null);
+      setMaterialesUsados([]);
+      setSinSuministros(false);
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error agregando DDLL", "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ----- Reagendar -----
+  const confirmarReagendar = async () => {
+    if (!reagendarMotivo) {
+      showToast("Selecciona un motivo", "error");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const r = await api.post(`/tecnico/ordenes/${id}/reagendar`, {
+        motivo: reagendarMotivo,
+        nueva_fecha: reagendarFecha || undefined,
+        nota: reagendarNota || undefined,
+      });
+      setOrden(r.data);
+      showToast("Orden reagendada ✓", "success");
+      setReagendarOpen(false);
+      setReagendarMotivo("");
+      setReagendarNota("");
+      setReagendarFecha("");
+    } catch (e: any) {
+      showToast(
+        e?.response?.data?.detail || "Error al reagendar",
+        "error"
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+
+
   const openMaps = () => {
     const dir = encodeURIComponent(orden?.sucursal?.direccion || "");
     Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${dir}`);
@@ -432,6 +521,32 @@ export default function TecnicoOrdenDetalle() {
             testID="iniciar-trabajo-btn"
             icon={<Ionicons name="play" size={18} color="#fff" />}
           />
+        )}
+
+        {/* Acciones extra: agregar DDLL + reagendar */}
+        {orden.estado !== "finalizada" && (
+          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+            <TouchableOpacity
+              style={styles.extraBtn}
+              onPress={() => setAddDdllOpen(true)}
+              testID="agregar-ddll-btn"
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add-circle-outline" size={16} color={colors.primary} />
+              <Text style={styles.extraBtnText}>Agregar DDLL</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.extraBtn, styles.warnBtn]}
+              onPress={() => setReagendarOpen(true)}
+              testID="reagendar-btn"
+              activeOpacity={0.8}
+            >
+              <Ionicons name="calendar-outline" size={16} color={colors.danger} />
+              <Text style={[styles.extraBtnText, { color: colors.danger }]}>
+                Reagendar
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {pinPads.length === 0 && (
@@ -803,11 +918,196 @@ export default function TecnicoOrdenDetalle() {
           </View>
         </TouchableOpacity>
       </FormSheet>
+
+      {/* Add new DDLL sheet */}
+      <FormSheet
+        visible={addDdllOpen}
+        onClose={() => setAddDdllOpen(false)}
+        title="Agregar Pin Pad nuevo"
+        testID="add-ddll-sheet"
+      >
+        <Text style={styles.helpText}>
+          Si llegaste y hay una DDLL no listada, agregala aquí con foto y
+          materiales utilizados.
+        </Text>
+        <Text style={styles.fieldLabel}>DDLL *</Text>
+        <TextInput
+          value={newDdll}
+          onChangeText={(t) => setNewDdll(t.toUpperCase())}
+          placeholder="Ej: U2PCD30745922009"
+          autoCapitalize="characters"
+          style={styles.input}
+          testID="new-ddll-input"
+        />
+        <Text style={styles.fieldLabel}>Serie</Text>
+        <TextInput
+          value={newSerie}
+          onChangeText={setNewSerie}
+          placeholder="(opcional)"
+          style={styles.input}
+        />
+        <Text style={styles.fieldLabel}>Modelo</Text>
+        <TextInput
+          value={newModelo}
+          onChangeText={setNewModelo}
+          placeholder="(opcional)"
+          style={styles.input}
+        />
+        <Text style={styles.fieldLabel}>Foto de evidencia *</Text>
+        {foto ? (
+          <Image source={{ uri: foto }} style={styles.fotoPreview} />
+        ) : (
+          <TouchableOpacity
+            onPress={() => setPickerOpen(true)}
+            style={styles.fotoBtn}
+          >
+            <Ionicons name="camera" size={24} color={colors.primary} />
+            <Text style={{ color: colors.primary, fontWeight: "700" }}>
+              Tomar / Elegir foto
+            </Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          onPress={() => {
+            if (!sinSuministros) setMaterialesUsados([]);
+            setSinSuministros((v) => !v);
+          }}
+          style={[styles.noSupBox, sinSuministros && styles.noSupBoxActive]}
+        >
+          <View
+            style={[
+              styles.checkBox,
+              sinSuministros && {
+                backgroundColor: colors.primary,
+                borderColor: colors.primary,
+              },
+            ]}
+          >
+            {sinSuministros && <Ionicons name="checkmark" size={14} color="#fff" />}
+          </View>
+          <Text style={styles.noSupTitle}>No se utilizaron suministros</Text>
+        </TouchableOpacity>
+        <Btn
+          title="Agregar DDLL"
+          onPress={confirmarAddDdll}
+          loading={actionLoading}
+          variant="accent"
+          disabled={!newDdll || !foto}
+          testID="confirmar-add-ddll"
+          icon={<Ionicons name="add" size={18} color="#fff" />}
+        />
+      </FormSheet>
+
+      {/* Reagendar visita sheet */}
+      <FormSheet
+        visible={reagendarOpen}
+        onClose={() => setReagendarOpen(false)}
+        title="Reagendar visita"
+        testID="reagendar-sheet"
+      >
+        <Text style={styles.helpText}>
+          Indica el motivo por el que no se pudo completar la visita.
+        </Text>
+        <Text style={styles.fieldLabel}>Motivo *</Text>
+        <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+          {[
+            "Solicitan cambio de día",
+            "Cliente no está en sucursal",
+            "Local cerrado",
+            "Falta de materiales",
+            "Otro",
+          ].map((m) => (
+            <TouchableOpacity
+              key={m}
+              style={[
+                styles.motivoChip,
+                reagendarMotivo === m && styles.motivoChipActive,
+              ]}
+              onPress={() => setReagendarMotivo(m)}
+              testID={`motivo-${m}`}
+            >
+              <Text
+                style={[
+                  styles.motivoChipText,
+                  reagendarMotivo === m && styles.motivoChipTextActive,
+                ]}
+              >
+                {m}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.fieldLabel}>Nueva fecha estimada</Text>
+        <TextInput
+          value={reagendarFecha}
+          onChangeText={setReagendarFecha}
+          placeholder="YYYY-MM-DD (opcional)"
+          style={styles.input}
+        />
+        <Text style={styles.fieldLabel}>Nota adicional</Text>
+        <TextInput
+          value={reagendarNota}
+          onChangeText={setReagendarNota}
+          placeholder="Detalle adicional (opcional)"
+          multiline
+          style={[styles.input, { minHeight: 60 }]}
+        />
+        <Btn
+          title="Confirmar reagenda"
+          onPress={confirmarReagendar}
+          loading={actionLoading}
+          variant="accent"
+          disabled={!reagendarMotivo}
+          testID="confirmar-reagendar"
+          icon={<Ionicons name="calendar" size={18} color="#fff" />}
+        />
+      </FormSheet>
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  extraBtn: {
+    flex: 1,
+    minWidth: 140,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+  },
+  warnBtn: {
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerSoft,
+  },
+  extraBtnText: {
+    color: colors.primary,
+    fontWeight: "700",
+    fontSize: fontSize.sm,
+  },
+  motivoChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    marginRight: 6,
+    marginBottom: 6,
+  },
+  motivoChipActive: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+  },
+  motivoChipText: { color: colors.textMain, fontSize: fontSize.xs, fontWeight: "600" },
+  motivoChipTextActive: { color: colors.primary },
+
   safe: { flex: 1, backgroundColor: colors.background },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   content: { padding: spacing.lg, paddingBottom: 60, gap: spacing.lg },

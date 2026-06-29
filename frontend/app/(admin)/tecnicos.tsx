@@ -36,6 +36,8 @@ export default function TecnicosList() {
     telefono: "",
     password: "",
     bodega_id: "",
+    direccion: "",
+    comuna: "",
   });
 
   const load = useCallback(async () => {
@@ -69,6 +71,8 @@ export default function TecnicosList() {
       telefono: "",
       password: "",
       bodega_id: "",
+      direccion: "",
+      comuna: "",
     });
     setSheet(true);
   };
@@ -94,6 +98,8 @@ export default function TecnicosList() {
       await api.post("/admin/tecnicos", {
         ...form,
         bodega_id: form.bodega_id || null,
+        direccion: form.direccion || null,
+        comuna: form.comuna || null,
       });
       showToast("Técnico creado", "success");
       setSheet(false);
@@ -383,6 +389,20 @@ export default function TecnicosList() {
           secureTextEntry
           autoCapitalize="none"
           testID="tecnico-password"
+        />
+        <Field
+          label="Dirección domicilio"
+          value={form.direccion}
+          onChangeText={(v) => setForm({ ...form, direccion: v })}
+          placeholder="Av. Principal 123"
+          testID="tecnico-direccion"
+        />
+        <Field
+          label="Comuna"
+          value={form.comuna}
+          onChangeText={(v) => setForm({ ...form, comuna: v })}
+          placeholder="Ej: Las Condes (usado para sugerir rutas)"
+          testID="tecnico-comuna"
         />
 
         <Text style={styles.bodegaLabel}>Bodega asignada</Text>

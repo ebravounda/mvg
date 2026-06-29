@@ -142,6 +142,8 @@ class TecnicoCreate(BaseModel):
     telefono: str
     password: str = Field(min_length=6)
     bodega_id: Optional[str] = None
+    direccion: Optional[str] = None
+    comuna: Optional[str] = None
 
 
 class TecnicoUpdate(BaseModel):
@@ -152,6 +154,8 @@ class TecnicoUpdate(BaseModel):
     telefono: Optional[str] = None
     password: Optional[str] = None
     bodega_id: Optional[str] = None
+    direccion: Optional[str] = None
+    comuna: Optional[str] = None
 
 
 class ClienteCreate(BaseModel):
@@ -367,6 +371,8 @@ async def create_tecnico(payload: TecnicoCreate, _: dict = Depends(require_admin
         "role": "tecnico",
         "hashed_password": hash_password(payload.password),
         "bodega_id": payload.bodega_id,
+        "direccion": payload.direccion,
+        "comuna": payload.comuna,
         "created_at": now_iso(),
     }
     await users_col.insert_one(new_user)
@@ -1308,15 +1314,37 @@ async def admin_stats(_: dict = Depends(require_admin)):
     en_progreso = await ordenes_col.count_documents({"estado": "en_progreso"})
     pendientes = await ordenes_col.count_documents({"estado": "pendiente"})
     finalizadas = await ordenes_col.count_documents({"estado": "finalizada"})
+    reagendadas = await ordenes_col.count_documents({"estado": "reagendada"})
     total_clientes = await clientes_col.count_documents({})
     total_tecnicos = await users_col.count_documents({"role": "tecnico"})
+
+    # Calcular Pin Pads pendientes y técnicos necesarios (25 pinpads/téc/día)
+    PINPADS_POR_TECNICO_DIA = 25
+    pendientes_docs = await ordenes_col.find(
+        {"estado": {"$in": ["pendiente", "en_progreso"]}},
+        {"_id": 0, "pin_pads": 1},
+    ).to_list(5000)
+    pin_pads_pendientes = 0
+    for o in pendientes_docs:
+        for pp in (o.get("pin_pads") or []):
+            if not pp.get("completed"):
+                pin_pads_pendientes += 1
+    import math as _math
+    tecnicos_necesarios = _math.ceil(pin_pads_pendientes / PINPADS_POR_TECNICO_DIA) if pin_pads_pendientes else 0
+    horas_estimadas = round(pin_pads_pendientes * 10 / 60, 1)
+
     return {
         "total_ordenes": total,
         "en_progreso": en_progreso,
         "pendientes": pendientes,
         "finalizadas": finalizadas,
+        "reagendadas": reagendadas,
         "total_clientes": total_clientes,
         "total_tecnicos": total_tecnicos,
+        "pin_pads_pendientes": pin_pads_pendientes,
+        "tecnicos_necesarios": tecnicos_necesarios,
+        "horas_totales_estimadas": horas_estimadas,
+        "pin_pads_por_tecnico_dia": PINPADS_POR_TECNICO_DIA,
     }
 
 
@@ -1757,12 +1785,348 @@ async def delete_pinpad_photo(
     return await enrich_orden(o)
 
 
-# Include router
-app.include_router(api_router)
+# ============================================================
+# NUEVAS FEATURES (Fase 1, 2, 3)
+# ============================================================
+
+class PinPadExtraCreate(BaseModel):
+    ddll: str
+    serie: Optional[str] = None
+    modelo: Optional[str] = None
+    evidencia_base64: str
+    notas: Optional[str] = None
+    materiales_usados: Optional[List[MaterialUsadoItem]] = None
+    sin_suministros: Optional[bool] = False
+
+
+@api_router.post("/tecnico/ordenes/{orden_id}/pinpad-extra")
+async def add_pinpad_extra(
+    orden_id: str,
+    payload: PinPadExtraCreate,
+    tec: dict = Depends(require_tecnico),
+):
+    """Técnico agrega un Pin Pad ADICIONAL no listado en la orden.
+
+    Valida que la DDLL tenga la misma longitud y patrón que las existentes,
+    sube la foto + materiales y queda visible para el admin.
+    """
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    if not payload.ddll or not payload.ddll.strip():
+        raise HTTPException(status_code=400, detail="DDLL requerido")
+
+    pin_pads = o.get("pin_pads") or []
+    ddll_clean = payload.ddll.strip().upper()
+
+    # Validar formato similar a las DDLL existentes
+    existing_ddlls = [pp.get("ddll", "") for pp in pin_pads if pp.get("ddll")]
+    if existing_ddlls:
+        # Detect length and patrón (alfanumérico)
+        ref_len = len(existing_ddlls[0])
+        ref_is_alnum = any(c.isalpha() for c in existing_ddlls[0])
+        if len(ddll_clean) != ref_len:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ingresa DDLL correctamente (debe tener {ref_len} caracteres)",
+            )
+        if ref_is_alnum and not ddll_clean.replace("-", "").isalnum():
+            raise HTTPException(
+                status_code=400,
+                detail="Ingresa DDLL correctamente (solo letras y números)",
+            )
+        if not ref_is_alnum and not ddll_clean.isdigit():
+            raise HTTPException(
+                status_code=400,
+                detail="Ingresa DDLL correctamente (solo dígitos numéricos)",
+            )
+
+    # Verificar duplicado
+    if any((pp.get("ddll") or "").strip().upper() == ddll_clean for pp in pin_pads):
+        raise HTTPException(
+            status_code=400, detail=f"DDLL {ddll_clean} ya existe en esta orden"
+        )
+
+    # Validación materiales
+    materiales = payload.materiales_usados or []
+    if not materiales and not payload.sin_suministros:
+        raise HTTPException(
+            status_code=400,
+            detail='Selecciona materiales o marca "No se utilizaron suministros".',
+        )
+
+    # Descuento de stock
+    if materiales:
+        try:
+            inv_col = db.inventario_tecnico
+            prod_col = db.productos
+            consumos_log = db.consumos_materiales
+            for item in materiales:
+                if not item.sku or item.cantidad <= 0:
+                    continue
+                inv = await inv_col.find_one({"tecnico_id": tec["id"], "sku": item.sku})
+                prod = await prod_col.find_one({"sku": item.sku})
+                desc = (prod or {}).get("descripcion") or item.descripcion
+                if inv:
+                    await inv_col.update_one(
+                        {"id": inv["id"]},
+                        {"$set": {"cantidad": inv["cantidad"] - item.cantidad, "updated_at": now_iso()}},
+                    )
+                else:
+                    await inv_col.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "tecnico_id": tec["id"],
+                        "sku": item.sku,
+                        "descripcion": desc,
+                        "cantidad": -item.cantidad,
+                        "created_at": now_iso(),
+                        "updated_at": now_iso(),
+                    })
+            await consumos_log.insert_one({
+                "id": str(uuid.uuid4()),
+                "tecnico_id": tec["id"],
+                "orden_id": orden_id,
+                "items": [it.model_dump() for it in materiales],
+                "tipo": "pinpad_extra",
+                "fecha": now_iso(),
+            })
+        except Exception as e:
+            logger.warning("[Consumo pinpad-extra] error: %s", e)
+
+    new_pp = {
+        "id": str(uuid.uuid4()),
+        "ddll": ddll_clean,
+        "serie": payload.serie,
+        "modelo": payload.modelo,
+        "completed": True,
+        "evidencia_base64": compress_evidencia(payload.evidencia_base64),
+        "notas": payload.notas,
+        "completed_at": now_iso(),
+        "uploaded_at": now_iso(),
+        "materiales_usados": [m.model_dump() for m in materiales],
+        "sin_suministros": bool(payload.sin_suministros) and not materiales,
+        "extra": True,  # Marca para distinguir DDLL agregadas por el técnico
+        "agregado_por": tec["id"],
+    }
+    pin_pads.append(new_pp)
+    await ordenes_col.update_one({"id": orden_id}, {"$set": {"pin_pads": pin_pads}})
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+# ----------------- Reagendar visita -----------------
+
+class ReagendarPayload(BaseModel):
+    motivo: str = Field(min_length=3)
+    nueva_fecha: Optional[str] = None  # ISO datetime
+    nota: Optional[str] = None
+
+
+@api_router.post("/tecnico/ordenes/{orden_id}/reagendar")
+async def reagendar_orden(
+    orden_id: str,
+    payload: ReagendarPayload,
+    tec: dict = Depends(require_tecnico),
+):
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    if o.get("estado") == "finalizada":
+        raise HTTPException(status_code=400, detail="Orden ya finalizada")
+
+    historial = o.get("reagendamientos") or []
+    historial.append({
+        "id": str(uuid.uuid4()),
+        "motivo": payload.motivo,
+        "nueva_fecha": payload.nueva_fecha,
+        "nota": payload.nota,
+        "tecnico_id": tec["id"],
+        "tecnico_nombre": f"{tec.get('nombre','')} {tec.get('apellidos','')}".strip(),
+        "fecha": now_iso(),
+    })
+
+    update_data = {
+        "estado": "reagendada",
+        "reagendamientos": historial,
+        "ultimo_motivo_reagenda": payload.motivo,
+    }
+    if payload.nueva_fecha:
+        update_data["fecha_limite"] = payload.nueva_fecha
+    await ordenes_col.update_one({"id": orden_id}, {"$set": update_data})
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+# ----------------- Ruta optimizada y jornada del técnico -----------------
+
+def _comuna_match_score(c1: Optional[str], c2: Optional[str]) -> int:
+    """Score 0 (igual) → mayor (lejos). Misma comuna = 0, distinta = 1."""
+    if not c1 or not c2:
+        return 99
+    return 0 if c1.strip().lower() == c2.strip().lower() else 1
+
+
+@api_router.get("/tecnico/ruta")
+async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
+    """Devuelve órdenes pendientes/en progreso del técnico ordenadas por
+    cercanía (comuna) a su domicilio, con cálculo de hora estimada de cierre."""
+    tec_comuna = (tec.get("comuna") or "").strip()
+    ordenes = await ordenes_col.find(
+        {
+            "tecnico_id": tec["id"],
+            "estado": {"$in": ["pendiente", "en_progreso", "reagendada"]},
+        },
+        {"_id": 0},
+    ).to_list(500)
+
+    enriched = [await enrich_orden(o) for o in ordenes]
+
+    # Nearest-neighbor por comuna (origen = comuna del técnico)
+    if tec_comuna:
+        def comuna_of(o):
+            suc = o.get("sucursal") or {}
+            return suc.get("comuna") or ""
+        # Primer pase: misma comuna primero
+        enriched.sort(key=lambda o: (_comuna_match_score(tec_comuna, comuna_of(o)), comuna_of(o)))
+
+    # Limit 25 (tope diario)
+    MAX_ORDERS_DAY = 25
+    ordenes_dia = enriched[:MAX_ORDERS_DAY]
+    ordenes_resto = enriched[MAX_ORDERS_DAY:]
+
+    # Calcular jornada estimada
+    PIN_PAD_MIN = 10
+    pinpads_total = 0
+    for o in ordenes_dia:
+        for pp in (o.get("pin_pads") or []):
+            if not pp.get("completed"):
+                pinpads_total += 1
+    minutos_estimados = pinpads_total * PIN_PAD_MIN
+    hora_inicio = "09:00"
+    h_ini, m_ini = 9, 0
+    total_m = m_ini + minutos_estimados
+    h_fin = (h_ini + total_m // 60) % 24
+    m_fin = total_m % 60
+    hora_termino = f"{h_fin:02d}:{m_fin:02d}"
+
+    return {
+        "tecnico_comuna": tec_comuna,
+        "ordenes_dia": ordenes_dia,
+        "ordenes_resto": ordenes_resto,
+        "max_dia": MAX_ORDERS_DAY,
+        "pin_pads_pendientes_dia": pinpads_total,
+        "min_estimados_jornada": minutos_estimados,
+        "hora_inicio_sugerida": hora_inicio,
+        "hora_termino_estimada": hora_termino,
+        "minutos_por_pinpad": PIN_PAD_MIN,
+    }
+
+
+# ----------------- Asignación masiva (admin) -----------------
+
+class AsignacionMasivaPayload(BaseModel):
+    orden_ids: Optional[List[str]] = None  # Si null → todas las pendientes sin asignar
+    tecnico_ids: Optional[List[str]] = None  # Si null → todos los técnicos
+    max_por_tecnico: int = 25
+
+
+@api_router.post("/admin/ordenes/asignar-masivo")
+async def asignacion_masiva(
+    payload: AsignacionMasivaPayload, _: dict = Depends(require_admin)
+):
+    """Distribuye órdenes pendientes entre técnicos basándose en cercanía
+    (comuna) del técnico al comercio. Máx max_por_tecnico órdenes/téc."""
+    # Cargar técnicos
+    if payload.tecnico_ids:
+        tec_query = {"role": "tecnico", "id": {"$in": payload.tecnico_ids}}
+    else:
+        tec_query = {"role": "tecnico"}
+    tecnicos = await users_col.find(tec_query, {"_id": 0, "hashed_password": 0}).to_list(500)
+    if not tecnicos:
+        raise HTTPException(status_code=400, detail="No hay técnicos disponibles")
+
+    # Cargar órdenes
+    if payload.orden_ids:
+        ord_query = {"id": {"$in": payload.orden_ids}}
+    else:
+        ord_query = {"estado": "pendiente", "tecnico_id": {"$in": [None, ""]}}
+    ordenes = await ordenes_col.find(ord_query, {"_id": 0}).to_list(2000)
+    if not ordenes:
+        return {"asignadas": 0, "detalle": [], "mensaje": "No hay órdenes para asignar"}
+
+    # Resolver comuna por orden (via sucursal)
+    sucursal_ids = list({o.get("sucursal_id") for o in ordenes if o.get("sucursal_id")})
+    sucursales_map = {}
+    if sucursal_ids:
+        sucs = await sucursales_col.find(
+            {"id": {"$in": sucursal_ids}}, {"_id": 0}
+        ).to_list(2000)
+        sucursales_map = {s["id"]: s for s in sucs}
+
+    # Contar carga actual por técnico (órdenes en pendiente/en_progreso)
+    carga_actual = {}
+    for t in tecnicos:
+        carga_actual[t["id"]] = await ordenes_col.count_documents(
+            {"tecnico_id": t["id"], "estado": {"$in": ["pendiente", "en_progreso"]}}
+        )
+
+    asignaciones = []
+    for o in ordenes:
+        suc = sucursales_map.get(o.get("sucursal_id"), {})
+        orden_comuna = (suc.get("comuna") or "").strip()
+        # Elegir técnico con menor score de distancia y carga disponible
+        candidatos = sorted(
+            tecnicos,
+            key=lambda t: (
+                _comuna_match_score(t.get("comuna"), orden_comuna),
+                carga_actual.get(t["id"], 0),
+            ),
+        )
+        elegido = None
+        for t in candidatos:
+            if carga_actual.get(t["id"], 0) < payload.max_por_tecnico:
+                elegido = t
+                break
+        if not elegido:
+            continue
+        await ordenes_col.update_one(
+            {"id": o["id"]},
+            {"$set": {"tecnico_id": elegido["id"], "estado": "pendiente"}},
+        )
+        carga_actual[elegido["id"]] = carga_actual.get(elegido["id"], 0) + 1
+        asignaciones.append({
+            "orden_id": o["id"],
+            "orden_numero": o.get("numero"),
+            "tecnico_id": elegido["id"],
+            "tecnico_nombre": f"{elegido.get('nombre','')} {elegido.get('apellidos','')}".strip(),
+            "comuna_orden": orden_comuna,
+            "comuna_tecnico": elegido.get("comuna") or "",
+        })
+        # Enviar WhatsApp en background
+        try:
+            await _send_assignment_whatsapp(o["id"])
+        except Exception as e:
+            logger.warning("[asignacion_masiva] WhatsApp error orden=%s: %s", o["id"], e)
+
+    return {
+        "asignadas": len(asignaciones),
+        "detalle": asignaciones,
+        "carga_final": carga_actual,
+    }
+
+
+
 
 # Mount suministros sub-router (with /api prefix to match the main api_router)
 _sum_router = build_suministros_router(db, require_admin, get_current_user)
 app.include_router(_sum_router, prefix="/api")
+
+# Include router (must be after all @api_router decorators so every route is registered)
+app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,

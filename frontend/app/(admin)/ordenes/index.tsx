@@ -746,6 +746,46 @@ export default function OrdenesList() {
         </TouchableOpacity>
       </FormSheet>
 
+        <TouchableOpacity
+          testID="accion-asignar-masivo"
+          style={styles.actionItem}
+          onPress={async () => {
+            setActionsOpen(false);
+            try {
+              const r = await api.post("/admin/ordenes/asignar-masivo", {
+                max_por_tecnico: 25,
+              });
+              showToast(
+                `${r.data.asignadas} órdenes asignadas a técnicos por cercanía`,
+                "success"
+              );
+              load();
+            } catch (e: any) {
+              showToast(
+                e?.response?.data?.detail || "Error en asignación masiva",
+                "error"
+              );
+            }
+          }}
+        >
+          <View
+            style={[
+              styles.actionIcon,
+              { backgroundColor: `${colors.completed}22` },
+            ]}
+          >
+            <Ionicons name="people" size={24} color={colors.completed} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.actionTitle}>Asignar masivamente</Text>
+            <Text style={styles.actionSub}>
+              Distribuye órdenes pendientes a técnicos según cercanía (máx 25/téc)
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+
+
       {/* Upload Excel sheet */}
       <FormSheet
         visible={uploadSheet}

@@ -1,0 +1,61 @@
+{
+  "summary": "Iter8 backend-only — 3 fases + asignación masiva. CRITICAL ROUTING BUG FOUND & FIXED: `app.include_router(api_router)` was called at line 1789 BEFORE the 4 new feature endpoints (pinpad-extra, reagendar, /tecnico/ruta, asignar-masivo) were declared, so they returned 404 / 405. Moved the include to after all @api_router decorators (line 2129). After the fix: 13/13 NEW iter8 tests PASS in /app/backend/tests/test_features_iter8.py. Covered: (a) POST /api/admin/tecnicos accepts + persists direccion + comuna; (b) POST /pinpad-extra happy-path 16-char alfanumérico, 400 on length mismatch with 'Ingresa DDLL correctamente', 400 on duplicate DDLL, 400 on no-materials+sin_suministros=false, 200 + descuento atómico de stock (50→47), 400 numeric-pattern rechaza alfanumérico; (c) POST /reagendar cambia estado a 'reagendada', guarda motivo+nueva_fecha en fecha_limite, mantiene historial acumulativo en 'reagendamientos', 400 si orden ya finalizada; (d) GET /tecnico/ruta devuelve shape correcto {ordenes_dia, ordenes_resto, max_dia=25, hora_inicio_sugerida='09:00', hora_termino_estimada, pin_pads_pendientes_dia} y nearest-neighbor por comuna ordena Santiago primero cuando el técnico vive en Santiago; (e) POST /admin/ordenes/asignar-masivo distribuye por cercanía (orden Santiago→téc Santiago, orden Valparaiso→téc Valparaiso) y respeta max_por_tecnico=2 (asigna solo 2 de 3); (f) GET /admin/stats incluye los 5 campos nuevos (pin_pads_pendientes, tecnicos_necesarios=ceil(pp/25), horas_totales_estimadas, pin_pads_por_tecnico_dia=25, reagendadas).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PATCH /api/tecnico/ordenes/{orden_id}/finalizar",
+        "issue": "PRE-EXISTING (no introducido por iter8): la función `finalizar_orden` en /app/backend/server.py:1654 NO tiene decorador @api_router.patch — está definida pero nunca registrada como ruta. Resultado: cualquier llamada externa a PATCH /finalizar devuelve 404. Causa los 2 fallos de iter7 (test_finalizar_*). Falta agregar @api_router.patch(\"/tecnico/ordenes/{orden_id}/finalizar\") antes de `async def finalizar_orden`.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "app.include_router(api_router) ordering",
+        "issue": "FIXED en esta iteración. El include estaba antes de las definiciones nuevas (pinpad-extra, reagendar, ruta, asignar-masivo). Reubicado al final del archivo (línea ~2129).",
+        "priority": "CRITICAL (FIXED)"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "PATCH /api/tecnico/ordenes/{id}/pinpad/{pid}",
+        "issue": "El endpoint ahora exige materiales_usados o sin_suministros=true. Esto rompe los tests de iter7 (test_geolocation_iter7.py::TestPinPadGeolocation/TestReplacePhoto/TestDeletePhoto) que no envían ese campo. Tests stale, no es un bug funcional. Sugerencia: actualizar test_geolocation_iter7.py para enviar `\"sin_suministros\": True` en el payload."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_features_iter8.py",
+    "/app/test_reports/pytest/pytest_iter8.xml"
+  ],
+  "action_items": [
+    "ALTA: Agregar el decorador `@api_router.patch(\"/tecnico/ordenes/{orden_id}/finalizar\")` justo antes de `async def finalizar_orden` en server.py línea ~1654. Es un endpoint público que no estaba registrado. Ya pasa el resto de tests de iter8 pero el cierre legacy de orden vía /finalizar no funciona desde el frontend.",
+    "MEDIA: Actualizar los tests stale de /app/backend/tests/test_geolocation_iter7.py para incluir `sin_suministros: True` en los payloads de PATCH /pinpad/{id} (la validación de materiales se añadió post-iter7). 10 tests stale, fácil migración mediante un helper.",
+    "BAJA: Considerar mover `app.include_router(api_router)` a un setup centralizado al final del archivo (ya lo hice en este pase) y documentarlo con un comentario para que futuros agregados de rutas no sufran el mismo bug.",
+    "BAJA (pre-existente): test_mvg_iter2 sigue fallando por mitiendapro 500 (documentado desde iter1). No bloqueante para iter8."
+  ],
+  "critical_code_review_comments": [
+    "server.py llegó a 2183 líneas. Sigue muy por encima del límite de 700 — candidato fuerte a split en routers/ (tecnico_ordenes.py, admin_tecnicos.py, admin_ordenes.py, etc.).",
+    "El validador de patrón en pinpad-extra usa `ddll_clean.replace('-','').isalnum()` lo cual acepta DDLL con guiones intermedios cuando ref no los tiene. Considerar validar también la posición de los guiones contra la primera DDLL existente.",
+    "asignacion_masiva ejecuta WhatsApp en bucle síncrono (await _send_assignment_whatsapp) — bloqueará si hay decenas de órdenes y mitiendapro tarda. Recomendar fire-and-forget con asyncio.create_task, o batch en background.",
+    "Endpoint /tecnico/ruta calcula la jornada SOLO en base a comuna; si el técnico no tiene comuna registrada, no hay ordenamiento y todo va a ordenes_dia. OK como fallback, pero loggear un warning una vez por técnico para que admin sepa que falta el dato.",
+    "En reagendar_orden no se valida que `nueva_fecha` sea futura. Un técnico podría pasar fechas pasadas y la orden quedaría con fecha_limite vencida.",
+    "Pin pad EXTRA siempre se marca `completed=True` y `uploaded_at=now()` — ojo: esto entra dentro de la ventana de 30 min para edición/eliminación (DELETE /foto) pero los tests existentes no cubren la edición de un pin pad EXTRA. Vale añadir cobertura.",
+    "El campo `direccion` del técnico aparece en el listado /api/admin/tecnicos pero no hay endpoint de auto-completado/validación de comuna contra un catálogo (regiones de Chile). Considerar agregar /api/admin/comunas para evitar typos que rompen el nearest-neighbor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_features_iter8.py (NEW — 13 tests, 6 clases)",
+    "/app/backend/server.py (FIX: movido `app.include_router(api_router)` después de todas las definiciones nuevas — línea 1789 eliminada, agregada al final ~línea 2129)"
+  ],
+  "success_rate": {
+    "backend": "100% iter8 (13/13). 20/30 en suite iter7+iter8 combinada (10 stale en iter7 por cambios de validación post-iter7 y por decorador faltante en finalizar_orden — pre-existentes a iter8).",
+    "frontend": "N/A (backend only)"
+  },
+  "seed_data_creation": "Cada test seed/cleanup su propia data vía MongoDB directo con `_test_marker='iter8'`. Fixture autouse `_module_cleanup` borra ordenes y sucursales con ese marker al final del módulo. Técnicos de prueba TEST_*@mvg.cl se borran vía DELETE /api/admin/tecnicos en los finally de cada test. Productos TEST-SKU-* quedan en la BD (no se limpian explícitamente — pueden eliminarse con db.productos.deleteMany({_test_marker:'iter8'})).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter8 tests: /app/backend/tests/test_features_iter8.py — 13 tests, ~12s, 100% verde tras el fix de routing. Reutilizan tecnico_user de conftest.py y crean técnicos efímeros con direccion/comuna mediante POST /admin/tecnicos. Para reproducir la asignación-masiva sin contaminar las 541 órdenes pendientes existentes, los tests pasan explícitamente `orden_ids` y `tecnico_ids` en el payload. El bug de routing detectado (app.include_router antes de las definiciones de rutas) es del tipo que solo se ve cuando se agregan endpoints al final del archivo — añadir un comentario o un test de smoke que verifique `/openapi.json` contiene todos los path esperados podría prevenir futuros casos similares.",
+  "rca_of_issue": "RCA del bug de routing: FastAPI's `app.include_router(router)` copia las rutas REGISTRADAS al momento de la llamada — no mantiene referencia viva. En server.py la llamada estaba en la línea 1789, antes de las 4 nuevas definiciones `@api_router.post/.get(...)` agregadas entre las líneas 1805-2122 para las features de iter8. Por eso los endpoints nuevos respondían 404 (no existían en la app) o 405 (cuando había otra ruta similar registrada antes, como /admin/ordenes/{id}/asignar vs /admin/ordenes/asignar-masivo). Reproducción: `curl http://localhost:8001/openapi.json | jq '.paths | keys' | grep pinpad-extra` → vacío antes del fix, presente después. Mitigación aplicada: reubicar `app.include_router(api_router)` al final del archivo, después de todas las definiciones. Recomendación a largo plazo: usar un patrón con `app.include_router()` SOLO en main() o en un bloque de bootstrap claramente identificado al final de server.py, o partir en routers/ y centralizar el bootstrap."
+}

@@ -104,6 +104,15 @@ export default function TecnicoLayout() {
           }}
         />
         <Tabs.Screen
+          name="ruta"
+          options={{
+            title: "Mi ruta",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="map-outline" size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
           name="suministros"
           options={{
             title: "Suministros",
