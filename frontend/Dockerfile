@@ -29,6 +29,6 @@ RUN npx expo export --platform web --output-dir /dist
 FROM nginx:alpine
 
 COPY --from=builder /dist /usr/share/nginx/html
-COPY deploy/nginx-spa.conf /etc/nginx/conf.d/default.conf
+COPY nginx-spa.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
