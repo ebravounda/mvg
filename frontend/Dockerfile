@@ -5,6 +5,9 @@ WORKDIR /app
 
 # Copy package files first for layer caching
 COPY package.json yarn.lock* package-lock.json* ./
+# Also copy scripts/ because package.json has a `preinstall` hook
+# that runs ./scripts/check-pkg.js
+COPY scripts ./scripts
 
 # Install deps (yarn si existe lockfile, sino npm)
 RUN if [ -f yarn.lock ]; then \
