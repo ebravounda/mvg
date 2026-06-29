@@ -76,39 +76,40 @@ export default function TecnicoOrdenes() {
         </Text>
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.filterRow}
-        style={styles.filterScroll}
-      >
-        {FILTERS.map((f) => {
-          const active = filter === f.value;
-          return (
-            <TouchableOpacity
-              key={f.value || "all"}
-              testID={`tec-filter-${f.value || "all"}`}
-              onPress={() => setFilter(f.value)}
-              style={[
-                styles.chip,
-                active && {
-                  backgroundColor: colors.primary,
-                  borderColor: colors.primary,
-                },
-              ]}
-            >
-              <Text
+      <View style={styles.filterScrollWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+        >
+          {FILTERS.map((f) => {
+            const active = filter === f.value;
+            return (
+              <TouchableOpacity
+                key={f.value || "all"}
+                testID={`tec-filter-${f.value || "all"}`}
+                onPress={() => setFilter(f.value)}
                 style={[
-                  styles.chipText,
-                  active && { color: "#fff", fontWeight: "700" },
+                  styles.chip,
+                  active && {
+                    backgroundColor: colors.primary,
+                    borderColor: colors.primary,
+                  },
                 ]}
               >
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+                <Text
+                  style={[
+                    styles.chipText,
+                    active && { color: "#fff", fontWeight: "700" },
+                  ]}
+                >
+                  {f.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 30 }} />
@@ -229,13 +230,21 @@ export default function TecnicoOrdenes() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  greetWrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  greetWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
   greet: { color: colors.textMain, fontSize: fontSize.xl, fontWeight: "800" },
   greetSub: { color: colors.textMuted, fontSize: fontSize.sm, marginTop: 2 },
-  filterScroll: { maxHeight: 56, flexGrow: 0 },
+  filterScrollWrap: {
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
   filterRow: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     gap: spacing.sm,
     alignItems: "center",
   },
