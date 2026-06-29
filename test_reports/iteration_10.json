@@ -1,0 +1,41 @@
+{
+  "summary": "Iter10 — Geocoding + Acordeón por Región→Comuna + Optimización de ruta del técnico probados extremo a extremo. Backend 9/9 (test_geocoding_iter10.py: geocode válido Av. Providencia 1234 → -33.4290/-70.6211 ∈ Chile; geocode dirección corta '<4 chars' → 400; geocode '' → 422; sin Authorization → 403; POST /admin/tecnicos auto-geocodifica al crear y lat/lng quedan poblados en GET; PATCH /admin/tecnicos cambia dir → re-geocodifica y persiste; GET /tecnico/ruta devuelve tecnico_lat/lng/direccion + ordenes_dia + ordenes_resto + hora_termino_estimada; misma-comuna prioritaria en la primera posición del día; POST /admin/geocode/sucursales?limit=5&only_missing=true responde {ok, fail, procesadas} con suma cuadrada y procesadas≤5). Frontend 100% verde: (a) /(admin)/ordenes muestra grupo-toggle-btn + grupo-expandir-todo + grupo-colapsar-todo, 114 group headers (regiones·comunas) con cuenta correcta, Colapsar→0 órdenes visibles, Expandir→543 órdenes, click en 1 header colapsa solo ese grupo (-2 órdenes), toggle a Lista oculta los headers; en modo selección 114 botones grupo-select-* marcan TODAS las órdenes del grupo y la selection-bar muestra '2 órdenes seleccionadas'; (b) Formulario Nuevo Técnico (testID 'tecnico-*') con AddressGeocodeField llenado de Av. Providencia 1234/Providencia/Metropolitana → tras 4-5s muestra 'Coords: -33.42901, -70.62110', display_name de OSM completo y iframe tecnico-map embebido cargando openstreetmap.org; (c) Form Editar Técnico (testID 'edit-tecnico-*') pre-carga valores existentes y al cambiar dirección a 'Av. Apoquindo 4700' re-geocodifica a -33.41232/-70.58066 con mapa OSM visible. 0 errores en console/network.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_geocoding_iter10.py",
+    "/app/test_reports/pytest/pytest_iter10.xml"
+  ],
+  "action_items": [
+    "NINGUNO BLOQUEANTE — las dos features de iter10 (acordeón Región→Comuna y geocoding/optimización de ruta) están completas y verdes en backend + frontend.",
+    "INFO: AddressGeocodeField utiliza un iframe (testID *-map) que solo se renderiza cuando lat≠null. Si un técnico existente no tiene coords almacenadas, el mapa aparece recién después de que el debounce de geocoding (≈900ms) resuelve. El comportamiento es correcto, pero conviene documentarlo para tests automáticos: hay que esperar ≥5s después de tipear la dirección antes de buscar el iframe.",
+    "INFO: el endpoint POST /admin/geocode acepta direccion='' pero responde 422 (validación pydantic) en lugar de 400. Esto es consistente con FastAPI pero el PRD pedía 400 explícito. Si se desea uniformar, agregar `@validator('direccion')` que devuelva 400 manualmente al estar vacío."
+  ],
+  "critical_code_review_comments": [
+    "/app/frontend/app/(admin)/ordenes/index.tsx llegó a 1835 líneas (era 1563 en iter9). Sigue creciendo y mezcla 3 modos de render + 5+ sheets + lógica de agrupación + filtros + selección masiva en un solo archivo. Refactor recomendado a hooks/useGroupedOrdenes.ts, components/GroupHeader.tsx, components/SelectionBar.tsx, etc. — antes de seguir agregando features encima.",
+    "Geocoding sequencial bloqueante: POST /admin/geocode/sucursales hace `await geocode_address(...)` en bucle sin paralelizar (correcto porque Nominatim limita a 1 req/s), pero con limit=200 puede tardar >3 minutos sin cancelación. Sugerencia: usar BackgroundTasks o stream SSE para evitar timeout del cliente.",
+    "tecnico_ruta (server.py:2192) no expone los `_dist_km_prev` que sí calcula `nearest_neighbor_sort` — los quita en el filtro de campos auxiliares (línea 2306). La UI podría aprovechar esta info para mostrar 'a 2.4km de la anterior' al lado de cada orden. Considerar exponerla.",
+    "Cache de geocoding negativo (líneas 117-128 de geocoding_service.py) no tiene TTL — si Nominatim falló una vez para una dirección, queda cacheada como 'no encontrada' indefinidamente. Recomendar agregar campo `cached_at` y expirar negativos a las 24h.",
+    "El testID `tecnico-map` y `edit-tecnico-map` solo se renderiza condicionalmente cuando lat/lng están definidos. Para tests E2E que necesitan verificar 'mapa presente' después de geocodificar, hay que esperar el debounce (≈5s). No es bug, pero conviene anotarlo."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_geocoding_iter10.py (NEW — 9 tests, ~19s, 100% verde)"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 iter10 + no regresión sobre las 5/5 iter9 + 13/13 iter8)",
+    "frontend": "100% (11/11 verificaciones del PRD ejecutadas sin errores)"
+  },
+  "seed_data_creation": "Los tests crean técnicos TEST (prefijo TEST_geo_, TEST_ruta_), 1 cliente TEST si no había, 3 sucursales TEST en Providencia/Las Condes/Ñuñoa con lat/lng explícitos, y 3 órdenes TEST_iter10_orden_* asignadas al técnico de test. Todo se limpia en teardown de fixture. El cache geocode_cache de MongoDB acumula entradas (Av. Providencia 1234, Av. Libertador Bernardo O'Higgins 1449, Av. Apoquindo 4700) que se reusan en runs posteriores — beneficioso, no requiere cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Tests de iter10 en /app/backend/tests/test_geocoding_iter10.py. Endpoints: POST /api/admin/geocode (server.py:592), POST /api/admin/tecnicos auto-geocode (server.py:363), PATCH /api/admin/tecnicos/{id} re-geocode (server.py:536), GET /api/tecnico/ruta (server.py:2192), POST /api/admin/geocode/sucursales (server.py:2361). Módulo geocoding_service.py con cache Mongo + rate-limit 1.05s. Frontend testIDs clave: ordenes → 'grupo-toggle-btn', 'grupo-expandir-todo', 'grupo-colapsar-todo', 'grupo-header-<region>::<comuna>', 'grupo-select-<region>::<comuna>'; tecnicos crear → 'tecnico-direccion/comuna/region/status/map/refresh'; tecnicos editar → 'edit-tecnico-direccion/comuna/region/status/map'. Para Playwright fill, usar `page.fill('[data-testid=\"tecnico-direccion\"]', ...)` directamente (no `[data-testid=\"...\"] input`). Esperar ≥5s tras tipear para que termine el debounce + petición a Nominatim. Login testIDs: 'login-email-input', 'login-password-input', 'login-submit-button'.",
+  "rca_of_issue": "N/A — las dos features de iter10 (Acordeón colapsable Región→Comuna en /(admin)/ordenes + geocoding automático + optimización de ruta nearest-neighbor) funcionan correctamente en backend y frontend. No se encontraron bugs en esta iteración."
+}

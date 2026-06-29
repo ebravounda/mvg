@@ -166,6 +166,90 @@ export default function OrdenesList() {
     return sorted;
   }, [items, query, sortBy]);
 
+  // ---------- Acordeón por Región → Comuna ----------
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [groupBy, setGroupBy] = useState<"region_comuna" | "none">("region_comuna");
+
+  const groupedData = useMemo(() => {
+    if (groupBy === "none") {
+      return {
+        groups: [] as Array<{ key: string; region: string; comuna: string; orders: any[] }>,
+        flat: filteredItems.map((o) => ({ kind: "row" as const, order: o, groupKey: "" })),
+      };
+    }
+    // Agrupar por (region, comuna). Mantener orden definido por sortBy dentro
+    // de cada grupo. Las claves se ordenan por (región alfabético, comuna alfabético).
+    const map = new Map<string, { region: string; comuna: string; orders: any[] }>();
+    for (const o of filteredItems) {
+      const region = (o.sucursal?.region || "Sin región").trim();
+      const comuna = (o.sucursal?.comuna || "Sin comuna").trim();
+      const key = `${region}::${comuna}`;
+      if (!map.has(key)) {
+        map.set(key, { region, comuna, orders: [] });
+      }
+      map.get(key)!.orders.push(o);
+    }
+    const groups = Array.from(map.entries())
+      .map(([key, v]) => ({ key, ...v }))
+      .sort((a, b) => {
+        const r = a.region.localeCompare(b.region, "es", { sensitivity: "base" });
+        if (r !== 0) return r;
+        return a.comuna.localeCompare(b.comuna, "es", { sensitivity: "base" });
+      });
+    // Build flat list for both desktop and mobile rendering:
+    const flat: Array<
+      | { kind: "header"; key: string; region: string; comuna: string; count: number; collapsed: boolean }
+      | { kind: "row"; order: any; groupKey: string }
+    > = [];
+    for (const g of groups) {
+      const collapsed = collapsedGroups.has(g.key);
+      flat.push({
+        kind: "header",
+        key: g.key,
+        region: g.region,
+        comuna: g.comuna,
+        count: g.orders.length,
+        collapsed,
+      });
+      if (!collapsed) {
+        for (const o of g.orders) {
+          flat.push({ kind: "row", order: o, groupKey: g.key });
+        }
+      }
+    }
+    return { groups, flat };
+  }, [filteredItems, groupBy, collapsedGroups]);
+
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const collapseAll = useCallback(() => {
+    setCollapsedGroups(new Set(groupedData.groups.map((g) => g.key)));
+  }, [groupedData.groups]);
+
+  const expandAll = useCallback(() => {
+    setCollapsedGroups(new Set());
+  }, []);
+
+  const selectAllInGroup = useCallback(
+    (key: string) => {
+      const g = groupedData.groups.find((x) => x.key === key);
+      if (!g) return;
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const o of g.orders) next.add(o.id);
+        return next;
+      });
+    },
+    [groupedData.groups]
+  );
+
   // ---------- Selection mode handlers ----------
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -640,7 +724,54 @@ export default function OrdenesList() {
           <View style={styles.tableSummary}>
             <Text style={styles.tableSummaryText}>
               {filteredItems.length} {filteredItems.length === 1 ? "orden" : "órdenes"}
+              {groupBy === "region_comuna" && groupedData.groups.length > 0 && (
+                <Text style={{ color: colors.textMuted }}>
+                  {" "}
+                  · {groupedData.groups.length} comuna{groupedData.groups.length === 1 ? "" : "s"}
+                </Text>
+              )}
             </Text>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <TouchableOpacity
+                testID="grupo-toggle-btn"
+                onPress={() =>
+                  setGroupBy(groupBy === "region_comuna" ? "none" : "region_comuna")
+                }
+                style={styles.headerSecondary}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name={groupBy === "region_comuna" ? "albums" : "list"}
+                  size={14}
+                  color={colors.primary}
+                />
+                <Text style={styles.headerSecondaryText}>
+                  {groupBy === "region_comuna" ? "Por comuna" : "Lista"}
+                </Text>
+              </TouchableOpacity>
+              {groupBy === "region_comuna" && (
+                <>
+                  <TouchableOpacity
+                    testID="grupo-expandir-todo"
+                    onPress={expandAll}
+                    style={styles.headerSecondary}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="chevron-down" size={14} color={colors.textMain} />
+                    <Text style={styles.headerSecondaryText}>Expandir</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="grupo-colapsar-todo"
+                    onPress={collapseAll}
+                    style={styles.headerSecondary}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="chevron-up" size={14} color={colors.textMain} />
+                    <Text style={styles.headerSecondaryText}>Colapsar</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
           </View>
           <View style={styles.tableCard}>
             <View style={styles.tableHeadRow}>
@@ -658,13 +789,51 @@ export default function OrdenesList() {
                 <Text style={styles.emptyTxt}>No hay órdenes</Text>
               </View>
             ) : (
-              filteredItems.map((o, idx) => (
+              groupedData.flat.map((row, idx) => {
+                if (row.kind === "header") {
+                  return (
+                    <TouchableOpacity
+                      key={`hdr-${row.key}`}
+                      testID={`grupo-header-${row.key}`}
+                      style={styles.groupHeaderDesktop}
+                      onPress={() => toggleGroup(row.key)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={row.collapsed ? "chevron-forward" : "chevron-down"}
+                        size={16}
+                        color={colors.primary}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.groupHeaderRegion}>{row.region}</Text>
+                        <Text style={styles.groupHeaderComuna}>
+                          {row.comuna} · {row.count} {row.count === 1 ? "orden" : "órdenes"}
+                        </Text>
+                      </View>
+                      {selectionMode && (
+                        <TouchableOpacity
+                          testID={`grupo-select-${row.key}`}
+                          onPress={(e: any) => {
+                            e?.stopPropagation?.();
+                            selectAllInGroup(row.key);
+                          }}
+                          style={styles.groupSelectAllBtn}
+                        >
+                          <Ionicons name="checkmark-done" size={14} color={colors.primary} />
+                          <Text style={styles.groupSelectAllText}>Seleccionar todas</Text>
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  );
+                }
+                const o = row.order;
+                return (
                 <TouchableOpacity
                   key={o.id}
                   testID={`orden-card-${o.id}`}
                   style={[
                     styles.tableRow,
-                    idx === filteredItems.length - 1 && { borderBottomWidth: 0 },
+                    idx === groupedData.flat.length - 1 && { borderBottomWidth: 0 },
                     selectedIds.has(o.id) && { backgroundColor: colors.primarySoft },
                   ]}
                   onPress={() => {
@@ -754,17 +923,20 @@ export default function OrdenesList() {
                     <DeadlineBadge fechaLimite={o.fecha_limite} />
                   </View>
                 </TouchableOpacity>
-              ))
+                );
+              })
             )}
           </View>
         </ScrollView>
       ) : (
         <FlatList
-          data={filteredItems}
-          keyExtractor={(o) => o.id}
+          data={groupedData.flat as any[]}
+          keyExtractor={(item: any) =>
+            item.kind === "header" ? `hdr-${item.key}` : item.order.id
+          }
           contentContainerStyle={{
             paddingHorizontal: spacing.lg,
-            paddingBottom: 100,
+            paddingBottom: 120,
             gap: spacing.md,
           }}
           refreshControl={
@@ -790,7 +962,46 @@ export default function OrdenesList() {
               </Text>
             </View>
           }
-          renderItem={({ item: o }) => (
+          renderItem={({ item }: any) => {
+            if (item.kind === "header") {
+              return (
+                <TouchableOpacity
+                  testID={`grupo-header-${item.key}`}
+                  style={styles.groupHeaderMobile}
+                  onPress={() => toggleGroup(item.key)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={item.collapsed ? "chevron-forward" : "chevron-down"}
+                    size={18}
+                    color={colors.primary}
+                  />
+                  <View style={{ flex: 1, marginLeft: 6 }}>
+                    <Text style={styles.groupHeaderRegion}>{item.region}</Text>
+                    <Text style={styles.groupHeaderComuna}>
+                      {item.comuna} · {item.count}{" "}
+                      {item.count === 1 ? "orden" : "órdenes"}
+                    </Text>
+                  </View>
+                  {selectionMode && (
+                    <TouchableOpacity
+                      testID={`grupo-select-${item.key}`}
+                      onPress={() => selectAllInGroup(item.key)}
+                      style={styles.groupSelectAllBtn}
+                    >
+                      <Ionicons
+                        name="checkmark-done"
+                        size={14}
+                        color={colors.primary}
+                      />
+                      <Text style={styles.groupSelectAllText}>Marcar</Text>
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              );
+            }
+            const o = item.order;
+            return (
             <TouchableOpacity
               testID={`orden-card-${o.id}`}
               style={[
@@ -894,7 +1105,8 @@ export default function OrdenesList() {
                 </View>
               </View>
             </TouchableOpacity>
-          )}
+            );
+          }}
         />
       )}
 
@@ -1447,7 +1659,14 @@ const styles = StyleSheet.create({
   },
 
   // Desktop table
-  tableSummary: { marginBottom: spacing.md },
+  tableSummary: {
+    marginBottom: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: spacing.md,
+  },
   tableSummaryText: {
     color: colors.textMuted,
     fontSize: fontSize.xs,
@@ -1560,4 +1779,56 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   selectionPrimaryText: { color: "#fff", fontWeight: "800", fontSize: fontSize.sm },
+
+  // Acordeón de grupos (region/comuna)
+  groupHeaderDesktop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderColor: colors.border,
+  },
+  groupHeaderMobile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  groupHeaderRegion: {
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  groupHeaderComuna: {
+    fontSize: fontSize.md,
+    color: colors.textMain,
+    fontWeight: "800",
+    marginTop: 1,
+  },
+  groupSelectAllBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+  },
+  groupSelectAllText: {
+    color: colors.primary,
+    fontSize: fontSize.xs,
+    fontWeight: "700",
+  },
 });

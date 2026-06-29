@@ -17,6 +17,7 @@ import { FormSheet } from "@/src/components/FormSheet";
 import { Field, Btn } from "@/src/components/Form";
 import { showToast } from "@/src/components/Toast";
 import { useAuth } from "@/src/context/AuthContext";
+import { AddressGeocodeField } from "@/src/components/AddressGeocodeField";
 import { colors, spacing, radius, fontSize } from "@/src/theme";
 
 export default function TecnicosList() {
@@ -38,6 +39,9 @@ export default function TecnicosList() {
     bodega_id: "",
     direccion: "",
     comuna: "",
+    region: "",
+    lat: null as number | null,
+    lng: null as number | null,
   });
 
   const load = useCallback(async () => {
@@ -73,6 +77,9 @@ export default function TecnicosList() {
       bodega_id: "",
       direccion: "",
       comuna: "",
+      region: "",
+      lat: null,
+      lng: null,
     });
     setSheet(true);
   };
@@ -100,6 +107,9 @@ export default function TecnicosList() {
         bodega_id: form.bodega_id || null,
         direccion: form.direccion || null,
         comuna: form.comuna || null,
+        region: form.region || null,
+        lat: form.lat,
+        lng: form.lng,
       });
       showToast("Técnico creado", "success");
       setSheet(false);
@@ -148,6 +158,11 @@ export default function TecnicosList() {
     telefono: "",
     bodega_id: "",
     password: "",
+    direccion: "",
+    comuna: "",
+    region: "",
+    lat: null as number | null,
+    lng: null as number | null,
   });
   const [editSaving, setEditSaving] = useState(false);
   const [sendingWa, setSendingWa] = useState(false);
@@ -161,6 +176,11 @@ export default function TecnicosList() {
       telefono: t.telefono || "",
       bodega_id: t.bodega_id || "",
       password: "",
+      direccion: t.direccion || "",
+      comuna: t.comuna || "",
+      region: t.region || "",
+      lat: t.lat ?? null,
+      lng: t.lng ?? null,
     });
     setEditSheet(true);
   };
@@ -175,6 +195,11 @@ export default function TecnicosList() {
         email: editForm.email.trim(),
         telefono: editForm.telefono.trim(),
         bodega_id: editForm.bodega_id || null,
+        direccion: editForm.direccion || null,
+        comuna: editForm.comuna || null,
+        region: editForm.region || null,
+        lat: editForm.lat,
+        lng: editForm.lng,
       };
       if (editForm.password.trim()) {
         if (editForm.password.length < 6) {
@@ -390,19 +415,23 @@ export default function TecnicosList() {
           autoCapitalize="none"
           testID="tecnico-password"
         />
-        <Field
-          label="Dirección domicilio"
-          value={form.direccion}
-          onChangeText={(v) => setForm({ ...form, direccion: v })}
-          placeholder="Av. Principal 123"
-          testID="tecnico-direccion"
-        />
-        <Field
-          label="Comuna"
-          value={form.comuna}
-          onChangeText={(v) => setForm({ ...form, comuna: v })}
-          placeholder="Ej: Las Condes (usado para sugerir rutas)"
-          testID="tecnico-comuna"
+        <AddressGeocodeField
+          direccion={form.direccion}
+          comuna={form.comuna}
+          region={form.region}
+          lat={form.lat}
+          lng={form.lng}
+          onChange={(v) =>
+            setForm({
+              ...form,
+              direccion: v.direccion,
+              comuna: v.comuna,
+              region: v.region,
+              lat: v.lat,
+              lng: v.lng,
+            })
+          }
+          testIDPrefix="tecnico"
         />
 
         <Text style={styles.bodegaLabel}>Bodega asignada</Text>
@@ -493,6 +522,25 @@ export default function TecnicosList() {
           placeholder="+56 9 ..."
           keyboardType="phone-pad"
           testID="edit-telefono"
+        />
+
+        <AddressGeocodeField
+          direccion={editForm.direccion}
+          comuna={editForm.comuna}
+          region={editForm.region}
+          lat={editForm.lat}
+          lng={editForm.lng}
+          onChange={(v) =>
+            setEditForm({
+              ...editForm,
+              direccion: v.direccion,
+              comuna: v.comuna,
+              region: v.region,
+              lat: v.lat,
+              lng: v.lng,
+            })
+          }
+          testIDPrefix="edit-tecnico"
         />
 
         <Text style={styles.bodegaLabel}>Bodega asignada</Text>

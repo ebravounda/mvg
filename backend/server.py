@@ -22,6 +22,7 @@ from whatsapp_service import send_whatsapp, build_assignment_message
 from pdf_service import build_orden_pdf
 from suministros_module import build_router as build_suministros_router, init_suministros
 from email_service import send_email, build_welcome_email
+from geocoding_service import geocode_address, haversine, nearest_neighbor_sort
 from fastapi.responses import StreamingResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -144,6 +145,9 @@ class TecnicoCreate(BaseModel):
     bodega_id: Optional[str] = None
     direccion: Optional[str] = None
     comuna: Optional[str] = None
+    region: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 class TecnicoUpdate(BaseModel):
@@ -156,6 +160,9 @@ class TecnicoUpdate(BaseModel):
     bodega_id: Optional[str] = None
     direccion: Optional[str] = None
     comuna: Optional[str] = None
+    region: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 class ClienteCreate(BaseModel):
@@ -361,6 +368,24 @@ async def create_tecnico(payload: TecnicoCreate, _: dict = Depends(require_admin
     rut_existing = await users_col.find_one({"rut": payload.rut})
     if rut_existing:
         raise HTTPException(status_code=400, detail="RUT ya registrado")
+
+    # Auto-geocode si tenemos dirección pero faltan coords
+    lat = payload.lat
+    lng = payload.lng
+    if (lat is None or lng is None) and payload.direccion:
+        try:
+            result = await geocode_address(
+                db, payload.direccion, payload.comuna, payload.region
+            )
+            if result:
+                lat, lng, _ = result
+                logger.info(
+                    "[geocode tecnico create] %s -> (%s, %s)",
+                    payload.direccion, lat, lng,
+                )
+        except Exception as e:
+            logger.warning("[geocode tecnico create] err: %s", e)
+
     new_user = {
         "id": str(uuid.uuid4()),
         "email": payload.email.lower(),
@@ -373,6 +398,9 @@ async def create_tecnico(payload: TecnicoCreate, _: dict = Depends(require_admin
         "bodega_id": payload.bodega_id,
         "direccion": payload.direccion,
         "comuna": payload.comuna,
+        "region": payload.region,
+        "lat": lat,
+        "lng": lng,
         "created_at": now_iso(),
     }
     await users_col.insert_one(new_user)
@@ -516,6 +544,32 @@ async def update_tecnico(
         update_data["email"] = update_data["email"].lower()
     if not update_data:
         raise HTTPException(status_code=400, detail="Sin cambios")
+
+    # Si dirección/comuna/region cambia y NO se pasan lat/lng explícitos,
+    # re-geocodificar
+    dir_changed = any(k in update_data for k in ("direccion", "comuna", "region"))
+    coords_explicit = "lat" in update_data and "lng" in update_data
+    if dir_changed and not coords_explicit:
+        existing = await users_col.find_one({"id": tecnico_id, "role": "tecnico"})
+        if existing:
+            new_dir = update_data.get("direccion", existing.get("direccion"))
+            new_com = update_data.get("comuna", existing.get("comuna"))
+            new_reg = update_data.get("region", existing.get("region"))
+            if new_dir:
+                try:
+                    r = await geocode_address(db, new_dir, new_com, new_reg)
+                    if r:
+                        update_data["lat"], update_data["lng"], _ = r
+                        logger.info(
+                            "[geocode tec update] %s -> (%s, %s)",
+                            new_dir, update_data["lat"], update_data["lng"],
+                        )
+                    else:
+                        update_data["lat"] = None
+                        update_data["lng"] = None
+                except Exception as e:
+                    logger.warning("[geocode tec update] err: %s", e)
+
     result = await users_col.update_one(
         {"id": tecnico_id, "role": "tecnico"}, {"$set": update_data}
     )
@@ -525,6 +579,29 @@ async def update_tecnico(
         {"id": tecnico_id}, {"_id": 0, "hashed_password": 0}
     )
     return user
+
+
+# ----------------- Geocoding (admin helper para UI) -----------------
+
+class GeocodePayload(BaseModel):
+    direccion: str
+    comuna: Optional[str] = None
+    region: Optional[str] = None
+
+
+@api_router.post("/admin/geocode")
+async def admin_geocode(payload: GeocodePayload, _: dict = Depends(require_admin)):
+    """Convierte dirección textual en coordenadas (usa Nominatim/OSM).
+    Útil para previsualizar en el formulario de técnico antes de guardar."""
+    if not payload.direccion or len(payload.direccion.strip()) < 4:
+        raise HTTPException(status_code=400, detail="Dirección demasiado corta")
+    result = await geocode_address(
+        db, payload.direccion, payload.comuna, payload.region
+    )
+    if not result:
+        return {"ok": False, "detail": "No se pudo geocodificar"}
+    lat, lng, display = result
+    return {"ok": True, "lat": lat, "lng": lng, "display_name": display}
 
 
 @api_router.delete("/admin/tecnicos/{tecnico_id}")
@@ -1060,6 +1137,17 @@ async def upload_ordenes_excel(
             {"cliente_id": cliente["id"], "codigo_comercio": cc}
         )
         if not suc:
+            # Intentar geocodificar (best-effort, no bloqueante)
+            lat = None
+            lng = None
+            if direccion:
+                try:
+                    r = await geocode_address(db, direccion, comuna, region)
+                    if r:
+                        lat, lng, _ = r
+                except Exception as e:
+                    logger.warning("[geocode sucursal] err: %s", e)
+
             suc = {
                 "id": str(uuid.uuid4()),
                 "cliente_id": cliente["id"],
@@ -1068,12 +1156,31 @@ async def upload_ordenes_excel(
                 "direccion": direccion,
                 "comuna": comuna,
                 "region": region,
+                "lat": lat,
+                "lng": lng,
                 "telefono": None,
                 "encargado": None,
                 "created_at": now_iso(),
             }
             await sucursales_col.insert_one(suc)
             summary["comercios_creados"] += 1
+        elif (suc.get("lat") is None or suc.get("lng") is None) and (suc.get("direccion") or direccion):
+            # Sucursal existe pero sin coords → intentar geocodificar
+            try:
+                r = await geocode_address(
+                    db,
+                    suc.get("direccion") or direccion,
+                    suc.get("comuna") or comuna,
+                    suc.get("region") or region,
+                )
+                if r:
+                    suc["lat"], suc["lng"], _ = r
+                    await sucursales_col.update_one(
+                        {"id": suc["id"]},
+                        {"$set": {"lat": suc["lat"], "lng": suc["lng"]}},
+                    )
+            except Exception as e:
+                logger.warning("[geocode sucursal existing] err: %s", e)
         return suc
 
     async def create_orden(cliente, suc, cc, fecha_lim, pin_pads, direccion):
@@ -2085,8 +2192,22 @@ def _comuna_match_score(c1: Optional[str], c2: Optional[str]) -> int:
 @api_router.get("/tecnico/ruta")
 async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
     """Devuelve órdenes pendientes/en progreso del técnico ordenadas por
-    cercanía (comuna) a su domicilio, con cálculo de hora estimada de cierre."""
+    proximidad real (nearest-neighbor) desde el domicilio del técnico, con
+    fallback por región → comuna → dirección cuando faltan coordenadas.
+
+    Estrategia de ordenamiento:
+      1) Si TODAS las órdenes tienen lat/lng y el técnico también → aplicar
+         nearest-neighbor puro empezando desde el domicilio del técnico.
+      2) Si faltan algunas coords → priorizar primero las que coincidan con
+         región y comuna del técnico, luego nearest-neighbor entre las que
+         tengan coords, y al final las que no tienen coords ordenadas por
+         región/comuna/dirección.
+    """
     tec_comuna = (tec.get("comuna") or "").strip()
+    tec_region = (tec.get("region") or "").strip()
+    tec_lat = tec.get("lat")
+    tec_lng = tec.get("lng")
+
     ordenes = await ordenes_col.find(
         {
             "tecnico_id": tec["id"],
@@ -2097,43 +2218,106 @@ async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
 
     enriched = [await enrich_orden(o) for o in ordenes]
 
-    # Sort: priority by (comuna match → region match → dirección cercana al domicilio)
-    tec_direccion = (tec.get("direccion") or "").strip().lower()
-
     def comuna_of(o):
-        suc = o.get("sucursal") or {}
-        return (suc.get("comuna") or "").strip()
+        return ((o.get("sucursal") or {}).get("comuna") or "").strip()
 
     def region_of(o):
-        suc = o.get("sucursal") or {}
-        return (suc.get("region") or "").strip()
+        return ((o.get("sucursal") or {}).get("region") or "").strip()
 
     def direccion_of(o):
+        return ((o.get("sucursal") or {}).get("direccion") or "").strip()
+
+    def latlng_of(o):
         suc = o.get("sucursal") or {}
-        return (suc.get("direccion") or "").strip().lower()
+        lat = suc.get("lat")
+        lng = suc.get("lng")
+        if lat is not None and lng is not None:
+            try:
+                return float(lat), float(lng)
+            except (TypeError, ValueError):
+                return None
+        return None
 
-    def address_proximity_score(o):
-        """Score más bajo = más cerca del domicilio del técnico.
-        Heurística: cantidad de palabras de la dirección del técnico
-        que coinciden con la dirección de la sucursal."""
-        if not tec_direccion:
-            return 100
-        dir_orden = direccion_of(o)
-        if not dir_orden:
-            return 99
-        tokens = [w for w in tec_direccion.split() if len(w) >= 3]
-        matches = sum(1 for t in tokens if t in dir_orden)
-        return 50 - matches  # menos = mejor
+    # Si el técnico tiene coords + hay órdenes con coords → nearest-neighbor
+    if tec_lat is not None and tec_lng is not None:
+        # Partir las órdenes en 4 buckets para ordenar EXACTAMENTE como pide:
+        #  Bucket A: misma REGIÓN y misma COMUNA del técnico
+        #  Bucket B: misma REGIÓN (otra comuna)
+        #  Bucket C: otras regiones
+        #  Bucket D: sin región/comuna (al final)
+        same_region_same_comuna = []
+        same_region_other = []
+        other_region = []
+        no_region = []
+        for o in enriched:
+            r = region_of(o).lower()
+            c = comuna_of(o).lower()
+            if not r:
+                no_region.append(o)
+            elif r == tec_region.lower() and c == tec_comuna.lower():
+                same_region_same_comuna.append(o)
+            elif r == tec_region.lower():
+                same_region_other.append(o)
+            else:
+                other_region.append(o)
 
-    if tec_comuna or tec_direccion:
-        enriched.sort(
-            key=lambda o: (
-                _comuna_match_score(tec_comuna, comuna_of(o)),
-                address_proximity_score(o),
-                region_of(o),
-                direccion_of(o),
+        # Helper: ordenar un bucket via nearest-neighbor (con coords) + fallback
+        # alfabético (sin coords) intercalado al final
+        def _enrich_with_coords(bucket):
+            out = []
+            for o in bucket:
+                ll = latlng_of(o)
+                if ll:
+                    out.append({**o, "_lat": ll[0], "_lng": ll[1]})
+                else:
+                    out.append(o)
+            return out
+
+        def _sort_nn_bucket(bucket, start):
+            with_coords = [
+                o for o in bucket
+                if o.get("_lat") is not None and o.get("_lng") is not None
+            ]
+            without = [
+                o for o in bucket
+                if o.get("_lat") is None or o.get("_lng") is None
+            ]
+            sorted_with = nearest_neighbor_sort(
+                start, with_coords, lat_key="_lat", lng_key="_lng",
             )
-        )
+            # ordenar las sin coords alfabéticamente por (region, comuna, direccion)
+            without.sort(key=lambda o: (region_of(o), comuna_of(o), direccion_of(o)))
+            return sorted_with + without, (sorted_with[-1] if sorted_with else None)
+
+        cursor = (tec_lat, tec_lng)
+        ordered: list = []
+        for bucket in (
+            same_region_same_comuna,
+            same_region_other,
+            other_region,
+            no_region,
+        ):
+            bucket_e = _enrich_with_coords(bucket)
+            sorted_bucket, last_in_bucket = _sort_nn_bucket(bucket_e, cursor)
+            if last_in_bucket is not None:
+                cursor = (last_in_bucket["_lat"], last_in_bucket["_lng"])
+            ordered.extend(sorted_bucket)
+
+        # Quitar campos auxiliares
+        enriched = [
+            {k: v for k, v in o.items() if k not in ("_lat", "_lng")}
+            for o in ordered
+        ]
+    else:
+        # Sin coords del técnico → fallback alfabético por región/comuna/dirección,
+        # priorizando coincidencia exacta con la comuna/región del técnico
+        def fallback_key(o):
+            r = region_of(o).lower()
+            c = comuna_of(o).lower()
+            score_region = 0 if r == tec_region.lower() and tec_region else 1
+            score_comuna = 0 if c == tec_comuna.lower() and tec_comuna else 1
+            return (score_region, score_comuna, r, c, direccion_of(o).lower())
+        enriched.sort(key=fallback_key)
 
     # Limit 25 (tope diario)
     MAX_ORDERS_DAY = 25
@@ -2157,6 +2341,10 @@ async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
 
     return {
         "tecnico_comuna": tec_comuna,
+        "tecnico_region": tec_region,
+        "tecnico_direccion": tec.get("direccion") or "",
+        "tecnico_lat": tec_lat,
+        "tecnico_lng": tec_lng,
         "ordenes_dia": ordenes_dia,
         "ordenes_resto": ordenes_resto,
         "max_dia": MAX_ORDERS_DAY,
@@ -2166,6 +2354,48 @@ async def tecnico_ruta(tec: dict = Depends(require_tecnico)):
         "hora_termino_estimada": hora_termino,
         "minutos_por_pinpad": PIN_PAD_MIN,
     }
+
+
+# ----------------- Re-geocode masivo (admin) -----------------
+
+@api_router.post("/admin/geocode/sucursales")
+async def regeocode_sucursales(
+    limit: int = Query(50, ge=1, le=200),
+    only_missing: bool = Query(True),
+    _: dict = Depends(require_admin),
+):
+    """Geocodifica sucursales que aún no tengan lat/lng (o todas si
+    ``only_missing=false``). Devuelve resumen. Usar con calma porque Nominatim
+    tiene rate limit de ~1 req/s.
+    """
+    query = {}
+    if only_missing:
+        query = {"$or": [{"lat": None}, {"lat": {"$exists": False}}]}
+    cursor = sucursales_col.find(query).limit(limit)
+    docs = await cursor.to_list(limit)
+    ok = 0
+    fail = 0
+    for s in docs:
+        if not s.get("direccion"):
+            fail += 1
+            continue
+        try:
+            r = await geocode_address(
+                db, s.get("direccion"), s.get("comuna"), s.get("region")
+            )
+            if r:
+                lat, lng, _disp = r
+                await sucursales_col.update_one(
+                    {"id": s["id"]},
+                    {"$set": {"lat": lat, "lng": lng}},
+                )
+                ok += 1
+            else:
+                fail += 1
+        except Exception as e:
+            logger.warning("[regeocode] %s err: %s", s.get("direccion"), e)
+            fail += 1
+    return {"ok": ok, "fail": fail, "procesadas": len(docs)}
 
 
 # ----------------- Asignación masiva (admin) -----------------

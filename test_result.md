@@ -211,8 +211,59 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Sesión retomada. Completé la UI de Asignación Masiva Manual que quedó a medias
-      en la sesión anterior. Detalles importantes:
+      Iter10: Implementado en esta sesión:
+      
+      1) BACKEND (server.py + nuevo geocoding_service.py):
+         - Módulo `geocoding_service` con Nominatim (OSM) + cache MongoDB + 
+           rate-limit 1 req/s + haversine + nearest_neighbor_sort
+         - TecnicoCreate/Update: agregados campos `region`, `lat`, `lng`
+         - create_tecnico: auto-geocode si hay dirección sin coords
+         - update_tecnico: re-geocode si cambia dirección/comuna/region
+         - NEW POST /api/admin/geocode: usado por el frontend para preview en vivo
+         - NEW POST /api/admin/geocode/sucursales: bulk re-geocode admin tool
+         - upsert_comercio (Excel): auto-geocode al crear/actualizar sucursal
+         - GET /api/tecnico/ruta REESCRITO con nearest-neighbor real:
+           * Buckets: misma_region_misma_comuna → misma_region → otra_region → sin_region
+           * Dentro de cada bucket: nearest-neighbor desde último punto (inicia en domicilio)
+           * Fallback alfabético si no hay coords
+           * Retorna lat/lng del técnico y dirección
+      
+      2) FRONTEND:
+         - NEW /app/frontend/src/components/AddressGeocodeField.tsx:
+           * Inputs Dirección + Comuna + Región
+           * Debounced geocoding (900ms) llama /api/admin/geocode
+           * Muestra coords, display_name OSM, botón "Recalcular"
+           * Iframe OSM embed con marcador (web); botón "Ver en mapa" (mobile)
+         - /(admin)/tecnicos.tsx: usa AddressGeocodeField en crear + editar técnico
+         - /(admin)/ordenes/index.tsx: acordeón colapsable por REGIÓN → COMUNA
+           * Botón "Por comuna" / "Lista" para toggle
+           * Botones "Expandir" / "Colapsar" para todos
+           * Header de grupo muestra "REGIÓN" + "COMUNA · N órdenes"
+           * En modo selección: botón "Seleccionar todas" por grupo
+           * Compatible con FlatList móvil + tabla desktop
+      
+      CREDENCIALES: admin@mvg.cl / Admin123!
+      
+      PRUEBAS NECESARIAS (testing_agent):
+      Backend:
+      - POST /api/admin/geocode con dirección válida → 200 con lat/lng
+      - POST /api/admin/geocode con dirección vacía → 400
+      - GET /api/tecnico/ruta: crear/usar técnico con lat/lng + órdenes asignadas;
+        validar que `ordenes_dia` esté ordenada con nearest-neighbor; verificar
+        que `tecnico_lat`/`tecnico_lng` aparezcan en la respuesta
+      - PATCH /api/admin/tecnicos/{id} cambiando dirección → debería auto-actualizar
+        lat/lng (verificar en DB)
+      Frontend:
+      - /(admin)/ordenes: verificar acordeón por región/comuna; toggle Lista/Por comuna;
+        Expandir/Colapsar; al colapsar todas las órdenes no se renderizan;
+        click en header de comuna colapsa/expande solo ese grupo
+      - /(admin)/tecnicos: abrir "Nuevo técnico"; rellenar dirección+comuna+región;
+        verificar que aparezcan coords + iframe OSM con marcador
+      - /(admin)/tecnicos editar técnico existente: el componente debe pre-cargar
+        coords del técnico (lat/lng en BD); cambiar dirección debe re-geocodificar
+      
+      NO regresiones: la asignación masiva manual (iter9) sigue activa, los testIDs
+      se mantienen (iniciar-seleccion-btn, bulk-asignar-abrir-picker, etc.).
       
       1) El endpoint backend correcto es POST /api/admin/ordenes/asignar-bulk
          (NO /asignar-masivo, ese es para autodistribución por cercanía).
