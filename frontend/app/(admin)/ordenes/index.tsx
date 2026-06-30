@@ -161,6 +161,11 @@ export default function OrdenesList() {
   }>({ comunas: [], regiones: [], clientes: [] });
   const [showFilters, setShowFilters] = useState(false);
 
+  // ---------- Acordeón por Región → Comuna (declarado antes de `load` para evitar TDZ) ----------
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [groupBy, setGroupBy] = useState<"region_comuna" | "none">("region_comuna");
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
+
   // Cargar opciones de filtros (se hace una sola vez)
   useEffect(() => {
     (async () => {
@@ -296,10 +301,6 @@ export default function OrdenesList() {
   }, [items, query, sortBy]);
 
   // ---------- Acordeón por Región → Comuna ----------
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [groupBy, setGroupBy] = useState<"region_comuna" | "none">("region_comuna");
-  const [autoCollapsed, setAutoCollapsed] = useState(false);
-
   const groupedData = useMemo(() => {
     if (groupBy === "none") {
       return {
