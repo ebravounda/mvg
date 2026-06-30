@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Linking,
   Modal,
+  TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
@@ -94,6 +95,36 @@ export default function OrdenDetalle() {
 
   const [reenviando, setReenviando] = useState(false);
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  // Editar fechas
+  const [editFechaOpen, setEditFechaOpen] = useState(false);
+  const [fechaEjecValue, setFechaEjecValue] = useState("");
+  const [fechaLimValue, setFechaLimValue] = useState("");
+  const [savingFechas, setSavingFechas] = useState(false);
+
+  const saveFechas = async () => {
+    setSavingFechas(true);
+    try {
+      const payload: any = {};
+      if (fechaEjecValue !== (orden?.fecha_ejecucion || "")) {
+        payload.fecha_ejecucion = fechaEjecValue || null;
+      }
+      if (fechaLimValue !== (orden?.fecha_limite || "")) {
+        payload.fecha_limite = fechaLimValue || null;
+      }
+      if (Object.keys(payload).length === 0) {
+        setEditFechaOpen(false);
+        return;
+      }
+      const r = await api.patch(`/admin/ordenes/${id}`, payload);
+      setOrden(r.data);
+      setEditFechaOpen(false);
+      showToast("Fechas actualizadas", "success");
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
+    } finally {
+      setSavingFechas(false);
+    }
+  };
   const onReenviarWhatsApp = async () => {
     if (reenviando) return;
     if (typeof window !== "undefined") {
@@ -233,7 +264,27 @@ export default function OrdenDetalle() {
                       ✓ {new Date(pp.completed_at).toLocaleString("es-CL")}
                     </Text>
                   ) : null}
-                  {pp.completed && pp.evidencia_base64 ? (
+                  {pp.completed && (pp.foto_antes_base64 || pp.foto_descarga_master_base64 || pp.foto_despues_base64 || pp.foto_comprobante_venta_base64) ? (
+                    <View style={{ gap: 6 }}>
+                      {[
+                        { src: pp.foto_antes_base64, label: "1. Antes" },
+                        { src: pp.foto_descarga_master_base64, label: "2. Descarga Master" },
+                        { src: pp.foto_despues_base64, label: "3. Después" },
+                        { src: pp.foto_comprobante_venta_base64, label: "4. Comprobante venta" },
+                      ].filter((x) => !!x.src).map((x, i) => (
+                        <View key={i} style={{ gap: 2 }}>
+                          <Text style={styles.ppPhotoLabel}>{x.label}</Text>
+                          <TouchableOpacity
+                            onPress={() => setLightboxUri(x.src)}
+                            activeOpacity={0.8}
+                            testID={`pp-foto-${pp.id}-${i}`}
+                          >
+                            <Image source={{ uri: x.src }} style={styles.ppThumb} resizeMode="cover" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  ) : pp.completed && pp.evidencia_base64 ? (
                     <TouchableOpacity
                       onPress={() => setLightboxUri(pp.evidencia_base64)}
                       activeOpacity={0.8}
@@ -290,12 +341,22 @@ export default function OrdenDetalle() {
           )}
         </Section>
 
+        <Section title="Comercio">
+          {orden.sucursal?.codigo_comercio && (
+            <Row icon="pricetag-outline" label="Código comercio" value={orden.sucursal.codigo_comercio} highlight />
+          )}
+          {orden.cliente?.rut && (
+            <Row icon="card-outline" label="RUT" value={orden.cliente.rut} />
+          )}
+          {orden.cliente?.nombre && (
+            <Row icon="business-outline" label="Razón social" value={orden.cliente.nombre} />
+          )}
+          {orden.cliente?.nombre_fantasia && (
+            <Row icon="storefront-outline" label="Nombre fantasía" value={orden.cliente.nombre_fantasia} />
+          )}
+        </Section>
+
         <Section title="Ubicación">
-          <Row
-            icon="business-outline"
-            label="Cliente"
-            value={orden.cliente?.nombre_fantasia || orden.cliente?.nombre}
-          />
           <Row
             icon="location-outline"
             label="Dirección"
@@ -418,6 +479,57 @@ export default function OrdenDetalle() {
           <Text style={styles.descripcion}>{orden.descripcion}</Text>
         </Section>
 
+        {/* CUE Section visible al admin */}
+        {orden.cue_base64 && (
+          <Section title="CUE (Comprobante Único)">
+            <TouchableOpacity
+              onPress={() => setLightboxUri(orden.cue_base64)}
+              activeOpacity={0.8}
+              testID="cue-foto-admin"
+            >
+              <Image
+                source={{ uri: orden.cue_base64 }}
+                style={styles.cueImg}
+                resizeMode="cover"
+              />
+              <View style={styles.ppExpandHint}>
+                <Ionicons name="expand-outline" size={12} color="#fff" />
+                <Text style={styles.ppExpandTxt}>Ver tamaño completo</Text>
+              </View>
+            </TouchableOpacity>
+            {orden.cue_uploaded_at && (
+              <Text style={styles.cueMeta}>
+                📅 Subido: {new Date(orden.cue_uploaded_at).toLocaleString("es-CL")}
+              </Text>
+            )}
+          </Section>
+        )}
+
+        <Section title="Fechas">
+          <Row
+            icon="calendar-outline"
+            label="Fecha límite"
+            value={orden.fecha_limite || "Sin definir"}
+          />
+          <Row
+            icon="time-outline"
+            label="Fecha de ejecución"
+            value={orden.fecha_ejecucion || "Sin definir"}
+          />
+          <TouchableOpacity
+            style={styles.editFechaBtn}
+            onPress={() => {
+              setFechaEjecValue(orden.fecha_ejecucion || "");
+              setFechaLimValue(orden.fecha_limite || "");
+              setEditFechaOpen(true);
+            }}
+            testID="editar-fechas-btn"
+          >
+            <Ionicons name="create-outline" size={14} color={colors.primary} />
+            <Text style={styles.editFechaText}>Editar fechas</Text>
+          </TouchableOpacity>
+        </Section>
+
         <Section title="Historial">
           <Row
             icon="calendar-outline"
@@ -534,6 +646,50 @@ export default function OrdenDetalle() {
           testID="asignar-confirmar"
           icon={<Ionicons name="logo-whatsapp" size={18} color="#fff" />}
         />
+      </FormSheet>
+
+      {/* Editar fechas */}
+      <FormSheet
+        visible={editFechaOpen}
+        onClose={() => setEditFechaOpen(false)}
+        title="Editar fechas"
+        testID="edit-fecha-sheet"
+      >
+        <Text style={styles.fieldLabel}>Fecha de ejecución (YYYY-MM-DD)</Text>
+        <TextInput
+          value={fechaEjecValue}
+          onChangeText={setFechaEjecValue}
+          placeholder="2026-07-15"
+          placeholderTextColor={colors.textDim}
+          style={styles.fechaInput}
+          testID="fecha-ejecucion-input"
+        />
+        <Text style={[styles.fieldLabel, { marginTop: 12 }]}>
+          Fecha límite (YYYY-MM-DD)
+        </Text>
+        <TextInput
+          value={fechaLimValue}
+          onChangeText={setFechaLimValue}
+          placeholder="2026-07-30"
+          placeholderTextColor={colors.textDim}
+          style={styles.fechaInput}
+          testID="fecha-limite-input"
+        />
+        <TouchableOpacity
+          style={styles.saveFechasBtn}
+          onPress={saveFechas}
+          disabled={savingFechas}
+          testID="guardar-fechas-btn"
+        >
+          {savingFechas ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="checkmark-circle" size={18} color="#fff" />
+          )}
+          <Text style={styles.saveFechasText}>
+            {savingFechas ? "Guardando…" : "Guardar fechas"}
+          </Text>
+        </TouchableOpacity>
       </FormSheet>
 
       {/* Photo Lightbox - vista a tamaño completo */}
@@ -785,6 +941,49 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   ppExpandTxt: { color: "#fff", fontSize: 10, fontWeight: "600" },
+  ppPhotoLabel: { color: colors.textMuted, fontSize: fontSize.xs, fontWeight: "600" },
+  cueImg: {
+    width: "100%",
+    height: 220,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  cueMeta: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 6 },
+  editFechaBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    marginTop: 8,
+  },
+  editFechaText: { color: colors.primary, fontWeight: "700", fontSize: fontSize.sm },
+  fieldLabel: { color: colors.textMain, fontWeight: "700", fontSize: fontSize.sm, marginBottom: 4 },
+  fechaInput: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: fontSize.md,
+    color: colors.textMain,
+  },
+  saveFechasBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    marginTop: 16,
+  },
+  saveFechasText: { color: "#fff", fontWeight: "800" },
   lightboxBg: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.92)",

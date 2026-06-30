@@ -109,6 +109,15 @@ export default function AdminLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="disponibilidad"
+        options={{
+          title: "Disponibilidad",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="calendar-outline" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

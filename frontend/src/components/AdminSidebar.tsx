@@ -12,6 +12,7 @@ const NAV: { label: string; icon: any; route: string; match: string[] }[] = [
   { label: "Comercios", icon: "storefront-outline", route: "/(admin)/comercios", match: ["/comercios", "/(admin)/comercios"] },
   { label: "Técnicos", icon: "people-outline", route: "/(admin)/tecnicos", match: ["/tecnicos", "/(admin)/tecnicos"] },
   { label: "Suministros", icon: "cube-outline", route: "/(admin)/suministros", match: ["/suministros", "/(admin)/suministros"] },
+  { label: "Disponibilidad", icon: "calendar-outline", route: "/(admin)/disponibilidad", match: ["/disponibilidad", "/(admin)/disponibilidad"] },
 ];
 
 export const SIDEBAR_WIDTH = 256;

@@ -33,8 +33,19 @@ export default function TecnicoOrdenDetalle() {
 
   const [selectedPp, setSelectedPp] = useState<any>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Cuando se abre el picker, indica qué slot se va a llenar: foto1..foto4 o cue
+  const [pickerTarget, setPickerTarget] = useState<
+    "foto1" | "foto2" | "foto3" | "foto4" | "cue"
+  >("foto1");
+  const [foto, setFoto] = useState<string | null>(null); // legacy / compatibilidad
+  // 4 fotos del protocolo MVG (foto2 y foto4 son opcionales)
+  const [foto1, setFoto1] = useState<string | null>(null); // antes
+  const [foto2, setFoto2] = useState<string | null>(null); // descarga master (opcional)
+  const [foto3, setFoto3] = useState<string | null>(null); // después
+  const [foto4, setFoto4] = useState<string | null>(null); // comprobante venta (opcional)
+  const [cueFoto, setCueFoto] = useState<string | null>(null);
+  const [cueUploading, setCueUploading] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const [foto, setFoto] = useState<string | null>(null);
   const [notas, setNotas] = useState("");
 
   // Materials used per pin-pad evidence
@@ -201,6 +212,17 @@ export default function TecnicoOrdenDetalle() {
     return false;
   };
 
+  // Asigna la foto recién capturada/seleccionada al slot indicado por pickerTarget
+  const assignFoto = (uri: string) => {
+    if (pickerTarget === "foto1") setFoto1(uri);
+    else if (pickerTarget === "foto2") setFoto2(uri);
+    else if (pickerTarget === "foto3") {
+      setFoto3(uri);
+      setFoto(uri); // mantener legacy
+    } else if (pickerTarget === "foto4") setFoto4(uri);
+    else if (pickerTarget === "cue") setCueFoto(uri);
+  };
+
   const tomarFoto = async () => {
     setPickerOpen(false);
     const ok = await ensurePerm(
@@ -215,7 +237,7 @@ export default function TecnicoOrdenDetalle() {
     });
     if (!res.canceled && res.assets[0]) {
       const a = res.assets[0];
-      setFoto(a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri);
+      assignFoto(a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri);
     }
   };
 
@@ -234,15 +256,56 @@ export default function TecnicoOrdenDetalle() {
     });
     if (!res.canceled && res.assets[0]) {
       const a = res.assets[0];
-      setFoto(a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri);
+      assignFoto(a.base64 ? `data:image/jpeg;base64,${a.base64}` : a.uri);
+    }
+  };
+
+  const openPickerFor = (target: typeof pickerTarget) => {
+    setPickerTarget(target);
+    setPickerOpen(true);
+  };
+
+  const uploadCue = async () => {
+    if (!cueFoto) {
+      showToast("Selecciona una foto del CUE", "error");
+      return;
+    }
+    setCueUploading(true);
+    try {
+      const r = await api.post(`/tecnico/ordenes/${id}/cue`, {
+        cue_base64: cueFoto,
+      });
+      setOrden(r.data);
+      setCueFoto(null);
+      showToast("CUE cargado correctamente", "success");
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error al subir CUE", "error");
+    } finally {
+      setCueUploading(false);
+    }
+  };
+
+  const deleteCue = async () => {
+    try {
+      await api.delete(`/tecnico/ordenes/${id}/cue`);
+      const r = await api.get(`/ordenes/${id}`);
+      setOrden(r.data);
+      showToast("CUE eliminado", "success");
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || "Error", "error");
     }
   };
 
   const confirmarPp = async () => {
     setSheetError(null);
     setSheetInfo(null);
-    if (!foto || !selectedPp) {
-      setSheetError("Adjunta una foto de evidencia.");
+    if (!selectedPp) return;
+    if (!foto1) {
+      setSheetError("Foto 1 (Pinpad ANTES de actualizar) es obligatoria.");
+      return;
+    }
+    if (!foto3) {
+      setSheetError("Foto 3 (Pinpad DESPUÉS de actualizar) es obligatoria.");
       return;
     }
     if (materialesUsados.length === 0 && !sinSuministros) {
@@ -261,7 +324,10 @@ export default function TecnicoOrdenDetalle() {
       const willClose = remainingAfter === 0;
 
       const payload: any = {
-        evidencia_base64: foto,
+        foto_antes_base64: foto1,
+        foto_despues_base64: foto3,
+        // foto principal de compat (queda igual al "después")
+        evidencia_base64: foto3,
         notas,
         materiales_usados: materialesUsados.map((m) => ({
           sku: m.sku,
@@ -270,6 +336,8 @@ export default function TecnicoOrdenDetalle() {
         })),
         sin_suministros: sinSuministros && materialesUsados.length === 0,
       };
+      if (foto2) payload.foto_descarga_master_base64 = foto2;
+      if (foto4) payload.foto_comprobante_venta_base64 = foto4;
       if (willClose) {
         try {
           setSheetInfo("Solicitando ubicación...");
@@ -319,6 +387,10 @@ export default function TecnicoOrdenDetalle() {
       setEvidenceOpen(false);
       setSelectedPp(null);
       setFoto(null);
+      setFoto1(null);
+      setFoto2(null);
+      setFoto3(null);
+      setFoto4(null);
       setNotas("");
       setMaterialesUsados([]);
       setSinSuministros(false);
@@ -513,6 +585,75 @@ export default function TecnicoOrdenDetalle() {
           </View>
         </View>
 
+        {/* CUE Section */}
+        <View style={styles.cueBox} testID="cue-section">
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="receipt-outline" size={18} color={colors.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cueTitle}>CUE (Comprobante)</Text>
+              <Text style={styles.cueSub}>
+                {orden.cue_base64
+                  ? "CUE cargado · puedes reemplazarlo o eliminarlo"
+                  : "Carga la foto del CUE para esta orden (opcional)"}
+              </Text>
+            </View>
+          </View>
+
+          {orden.cue_base64 && !cueFoto && (
+            <Image
+              source={{ uri: orden.cue_base64 }}
+              style={styles.cuePreview}
+              resizeMode="cover"
+              testID="cue-preview-server"
+            />
+          )}
+          {cueFoto && (
+            <Image
+              source={{ uri: cueFoto }}
+              style={styles.cuePreview}
+              resizeMode="cover"
+              testID="cue-preview-local"
+            />
+          )}
+
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity
+              style={[styles.cueBtn, { flex: 1 }]}
+              onPress={() => openPickerFor("cue")}
+              testID="cue-tomar-btn"
+            >
+              <Ionicons name="camera" size={16} color="#fff" />
+              <Text style={styles.cueBtnText}>
+                {orden.cue_base64 || cueFoto ? "Cambiar" : "Tomar foto CUE"}
+              </Text>
+            </TouchableOpacity>
+            {cueFoto && (
+              <TouchableOpacity
+                style={[styles.cueBtn, { backgroundColor: colors.completed, flex: 1 }]}
+                onPress={uploadCue}
+                disabled={cueUploading}
+                testID="cue-subir-btn"
+              >
+                {cueUploading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="cloud-upload" size={16} color="#fff" />
+                )}
+                <Text style={styles.cueBtnText}>Subir</Text>
+              </TouchableOpacity>
+            )}
+            {orden.cue_base64 && !cueFoto && (
+              <TouchableOpacity
+                style={[styles.cueBtn, { backgroundColor: colors.danger, flex: 0.7 }]}
+                onPress={deleteCue}
+                testID="cue-borrar-btn"
+              >
+                <Ionicons name="trash" size={16} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         {orden.estado === "pendiente" && pinPads.length > 0 && (
           <Btn
             title="Iniciar trabajo"
@@ -695,36 +836,59 @@ export default function TecnicoOrdenDetalle() {
           </View>
         )}
 
-        {foto ? (
-          <View style={{ gap: spacing.sm }}>
-            <Image
-              source={{ uri: foto }}
-              style={styles.previewPhoto}
-              resizeMode="cover"
-              testID="pp-preview"
-            />
-            <TouchableOpacity
-              testID="cambiar-foto"
-              style={styles.changeBtn}
-              onPress={() => setPickerOpen(true)}
-            >
-              <Ionicons name="refresh" size={16} color="#fff" />
-              <Text style={styles.changeBtnText}>Cambiar foto</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            testID="agregar-foto"
-            style={styles.photoEmpty}
-            onPress={() => setPickerOpen(true)}
-          >
-            <View style={styles.photoEmptyIcon}>
-              <Ionicons name="camera" size={32} color={colors.accent} />
+        {/* 4 fotos protocolo MVG */}
+        <View style={{ gap: spacing.md }}>
+          {[
+            { slot: "foto1" as const, val: foto1, set: setFoto1, label: "1. Pinpad ANTES de actualizar", required: true },
+            { slot: "foto2" as const, val: foto2, set: setFoto2, label: "2. Informe Descarga Master", required: false },
+            { slot: "foto3" as const, val: foto3, set: setFoto3, label: "3. Pinpad DESPUÉS de actualizar", required: true },
+            { slot: "foto4" as const, val: foto4, set: setFoto4, label: "4. Comprobante de venta", required: false },
+          ].map((f) => (
+            <View key={f.slot} style={{ gap: 6 }} testID={`evidencia-${f.slot}`}>
+              <Text style={styles.fieldLabel}>
+                {f.label}
+                {f.required ? " *" : " (opcional)"}
+              </Text>
+              {f.val ? (
+                <View style={{ gap: 4 }}>
+                  <Image
+                    source={{ uri: f.val }}
+                    style={styles.previewPhoto}
+                    resizeMode="cover"
+                    testID={`preview-${f.slot}`}
+                  />
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.changeBtn, { flex: 1 }]}
+                      onPress={() => openPickerFor(f.slot)}
+                      testID={`cambiar-${f.slot}`}
+                    >
+                      <Ionicons name="refresh" size={14} color="#fff" />
+                      <Text style={styles.changeBtnText}>Cambiar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.changeBtn, { flex: 1, backgroundColor: colors.danger }]}
+                      onPress={() => f.set(null)}
+                      testID={`borrar-${f.slot}`}
+                    >
+                      <Ionicons name="trash" size={14} color="#fff" />
+                      <Text style={styles.changeBtnText}>Quitar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  testID={`agregar-${f.slot}`}
+                  style={[styles.photoEmpty, !f.required && { borderStyle: "dashed" }]}
+                  onPress={() => openPickerFor(f.slot)}
+                >
+                  <Ionicons name="camera" size={24} color={colors.accent} />
+                  <Text style={styles.photoEmptyTitle}>Tomar foto</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            <Text style={styles.photoEmptyTitle}>Agregar foto</Text>
-            <Text style={styles.photoEmptySub}>Cámara o galería</Text>
-          </TouchableOpacity>
-        )}
+          ))}
+        </View>
 
         <View style={{ gap: 6 }}>
           <Text style={styles.fieldLabel}>Notas (opcional)</Text>
@@ -1176,6 +1340,33 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   progressFill: { height: "100%", backgroundColor: colors.completed },
+  cueBox: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  cueTitle: { color: colors.textMain, fontSize: fontSize.md, fontWeight: "800" },
+  cueSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
+  cuePreview: {
+    width: "100%",
+    height: 180,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  cueBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.primary,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  cueBtnText: { color: "#fff", fontWeight: "700", fontSize: fontSize.sm },
 
   empty: {
     backgroundColor: colors.surface,

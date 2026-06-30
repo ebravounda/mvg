@@ -240,6 +240,7 @@ class OrdenUpdate(BaseModel):
     modelo: Optional[str] = None
     ddll: Optional[str] = None
     fecha_limite: Optional[str] = None
+    fecha_ejecucion: Optional[str] = None  # YYYY-MM-DD o ISO datetime
 
 
 class OrdenAsignar(BaseModel):
@@ -263,23 +264,58 @@ class MaterialUsadoItem(BaseModel):
 
 
 class PinPadUpdate(BaseModel):
-    evidencia_base64: str
+    # Foto principal (compat con flujo anterior). Si se reciben los nuevos
+    # campos foto_antes/foto_despues, este queda como alias del "antes" o
+    # "después" (se mantiene por retrocompatibilidad).
+    evidencia_base64: Optional[str] = None
+
+    # NUEVOS campos (4 fotos protocolo MVG)
+    foto_antes_base64: Optional[str] = None             # 1) Pinpad ANTES de actualizar (OBLIGATORIA)
+    foto_descarga_master_base64: Optional[str] = None   # 2) Informe Descarga Master (OPCIONAL)
+    foto_despues_base64: Optional[str] = None           # 3) Pinpad DESPUÉS de actualizar (OBLIGATORIA)
+    foto_comprobante_venta_base64: Optional[str] = None # 4) Comprobante de venta (OPCIONAL)
+
     notas: Optional[str] = None
-    # Optional location (captured on every photo upload, mandatory only when
-    # closing the order). If provided AND this completes the order it will
-    # also act as the closing location.
     lat: Optional[float] = None
     lng: Optional[float] = None
     address: Optional[str] = None
     accuracy_m: Optional[float] = None
-    # Materials used while attending THIS pin pad. Either a non-empty list
-    # OR sin_suministros=True is required.
     materiales_usados: Optional[List[MaterialUsadoItem]] = None
     sin_suministros: Optional[bool] = False
 
 
 class PinPadEditPhoto(BaseModel):
-    evidencia_base64: str  # new photo
+    """Edición de fotos individuales del pinpad. Permite actualizar
+    cualquiera de las 4 fotos. Mantiene compat con el flujo viejo."""
+    evidencia_base64: Optional[str] = None
+    foto_antes_base64: Optional[str] = None
+    foto_descarga_master_base64: Optional[str] = None
+    foto_despues_base64: Optional[str] = None
+    foto_comprobante_venta_base64: Optional[str] = None
+    notas: Optional[str] = None
+
+
+# ----------------- Disponibilidad técnico -----------------
+class DisponibilidadDia(BaseModel):
+    activo: bool = False
+    hora_inicio: str = "09:00"   # formato HH:MM (24h), entre 00:00 y 23:59
+    hora_fin: str = "20:00"
+
+
+class DisponibilidadSemanal(BaseModel):
+    """Disponibilidad semanal del técnico. Claves: lun, mar, mié, jue, vie, sáb, dom."""
+    lun: DisponibilidadDia = DisponibilidadDia()
+    mar: DisponibilidadDia = DisponibilidadDia()
+    mie: DisponibilidadDia = DisponibilidadDia()
+    jue: DisponibilidadDia = DisponibilidadDia()
+    vie: DisponibilidadDia = DisponibilidadDia()
+    sab: DisponibilidadDia = DisponibilidadDia()
+    dom: DisponibilidadDia = DisponibilidadDia()
+
+
+class OrdenCUEUpload(BaseModel):
+    """Subida de foto del CUE (Comprobante Único Electrónico) para una orden."""
+    cue_base64: str
     notas: Optional[str] = None
 
 
@@ -1712,11 +1748,32 @@ async def update_pinpad(
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     if o.get("tecnico_id") != tec["id"]:
         raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
-    if not payload.evidencia_base64:
-        raise HTTPException(status_code=400, detail="Evidencia requerida")
 
-    # Compress incoming photo to keep BSON doc under 16MB
-    compressed_evidence = compress_evidencia(payload.evidencia_base64)
+    # ---- Validar fotos (4 fotos del protocolo MVG con backward compat) ----
+    # Nuevo flujo: foto_antes + foto_despues OBLIGATORIAS, las otras 2 opcionales.
+    # Legacy: si solo viene evidencia_base64, lo aceptamos como antes Y después
+    # (no podemos partirlo, así que lo guardamos como evidencia "principal").
+    has_new_required = bool(payload.foto_antes_base64) and bool(payload.foto_despues_base64)
+    has_legacy = bool(payload.evidencia_base64)
+    if not has_new_required and not has_legacy:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Se requieren al menos 2 fotos: Pinpad antes de actualizar y "
+                "Pinpad después de actualizar."
+            ),
+        )
+
+    # Compress incoming photos
+    compressed_antes = compress_evidencia(payload.foto_antes_base64) if payload.foto_antes_base64 else None
+    compressed_dm = compress_evidencia(payload.foto_descarga_master_base64) if payload.foto_descarga_master_base64 else None
+    compressed_despues = compress_evidencia(payload.foto_despues_base64) if payload.foto_despues_base64 else None
+    compressed_cv = compress_evidencia(payload.foto_comprobante_venta_base64) if payload.foto_comprobante_venta_base64 else None
+    # Foto principal de compat: usa "despues" si existe, sino el legacy
+    compressed_evidence = (
+        compressed_despues
+        or (compress_evidencia(payload.evidencia_base64) if payload.evidencia_base64 else None)
+    )
 
     materiales = payload.materiales_usados or []
     if not materiales and not payload.sin_suministros:
@@ -1788,7 +1845,18 @@ async def update_pinpad(
     for pp in pin_pads:
         if pp.get("id") == pinpad_id:
             pp["completed"] = True
-            pp["evidencia_base64"] = compressed_evidence
+            # Mantener compat: guarda evidencia_base64 con la foto "después" o legacy
+            if compressed_evidence:
+                pp["evidencia_base64"] = compressed_evidence
+            # Las 4 fotos del protocolo MVG (None si no se enviaron)
+            if compressed_antes is not None:
+                pp["foto_antes_base64"] = compressed_antes
+            if compressed_dm is not None:
+                pp["foto_descarga_master_base64"] = compressed_dm
+            if compressed_despues is not None:
+                pp["foto_despues_base64"] = compressed_despues
+            if compressed_cv is not None:
+                pp["foto_comprobante_venta_base64"] = compressed_cv
             pp["notas"] = payload.notas
             pp["completed_at"] = now_iso()
             pp["uploaded_at"] = now_iso()  # for 30-min edit window
@@ -1946,10 +2014,22 @@ async def replace_pinpad_photo(
                 "Contacta al admin para correcciones."
             ),
         )
-    target["evidencia_base64"] = payload.evidencia_base64
+    target["edited_at"] = now_iso()
+    # Aplicar las fotos que vengan (cualquier combinación)
+    if payload.evidencia_base64:
+        target["evidencia_base64"] = compress_evidencia(payload.evidencia_base64)
+    if payload.foto_antes_base64:
+        target["foto_antes_base64"] = compress_evidencia(payload.foto_antes_base64)
+    if payload.foto_descarga_master_base64:
+        target["foto_descarga_master_base64"] = compress_evidencia(payload.foto_descarga_master_base64)
+    if payload.foto_despues_base64:
+        target["foto_despues_base64"] = compress_evidencia(payload.foto_despues_base64)
+        # también actualiza evidencia legacy si está
+        target["evidencia_base64"] = target["foto_despues_base64"]
+    if payload.foto_comprobante_venta_base64:
+        target["foto_comprobante_venta_base64"] = compress_evidencia(payload.foto_comprobante_venta_base64)
     if payload.notas is not None:
         target["notas"] = payload.notas
-    target["edited_at"] = now_iso()
     await ordenes_col.update_one({"id": orden_id}, {"$set": {"pin_pads": pin_pads}})
     o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
     return await enrich_orden(o)
@@ -2527,6 +2607,121 @@ async def asignacion_masiva(
     }
 
 
+# ============================================================
+#   DISPONIBILIDAD SEMANAL DEL TÉCNICO
+# ============================================================
+
+_DEFAULT_DISPONIBILIDAD = {
+    d: {"activo": False, "hora_inicio": "09:00", "hora_fin": "20:00"}
+    for d in ("lun", "mar", "mie", "jue", "vie", "sab", "dom")
+}
+
+
+@api_router.get("/tecnico/disponibilidad")
+async def get_mi_disponibilidad(tec: dict = Depends(require_tecnico)):
+    """Devuelve la disponibilidad semanal del técnico autenticado."""
+    user = await users_col.find_one({"id": tec["id"]}, {"_id": 0, "hashed_password": 0})
+    disp = (user or {}).get("disponibilidad") or _DEFAULT_DISPONIBILIDAD
+    return {"disponibilidad": disp}
+
+
+@api_router.put("/tecnico/disponibilidad")
+async def set_mi_disponibilidad(
+    payload: DisponibilidadSemanal, tec: dict = Depends(require_tecnico)
+):
+    """El técnico configura su disponibilidad semanal."""
+    data = payload.model_dump()
+    # Validación básica de formato HH:MM
+    for dia, info in data.items():
+        for k in ("hora_inicio", "hora_fin"):
+            v = info.get(k, "")
+            if not (isinstance(v, str) and len(v) == 5 and v[2] == ":"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Formato hora inválido en {dia}.{k} (esperado HH:MM)",
+                )
+        if info["activo"] and info["hora_fin"] <= info["hora_inicio"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"En {dia} la hora_fin debe ser mayor que hora_inicio",
+            )
+    await users_col.update_one(
+        {"id": tec["id"]}, {"$set": {"disponibilidad": data, "disponibilidad_updated_at": now_iso()}}
+    )
+    return {"ok": True, "disponibilidad": data}
+
+
+@api_router.get("/admin/disponibilidad")
+async def admin_get_disponibilidad(_: dict = Depends(require_admin)):
+    """Admin: ve la disponibilidad de TODOS los técnicos."""
+    tecs = await users_col.find(
+        {"role": "tecnico"},
+        {"_id": 0, "hashed_password": 0},
+    ).to_list(500)
+    out = []
+    for t in tecs:
+        disp = t.get("disponibilidad") or _DEFAULT_DISPONIBILIDAD
+        out.append({
+            "id": t["id"],
+            "nombre": t.get("nombre", ""),
+            "apellidos": t.get("apellidos", ""),
+            "email": t.get("email", ""),
+            "telefono": t.get("telefono", ""),
+            "comuna": t.get("comuna", ""),
+            "region": t.get("region", ""),
+            "disponibilidad": disp,
+            "disponibilidad_updated_at": t.get("disponibilidad_updated_at"),
+        })
+    out.sort(key=lambda x: (x["apellidos"], x["nombre"]))
+    return out
+
+
+# ============================================================
+#   CUE (Comprobante Único Electrónico) por orden
+# ============================================================
+
+@api_router.post("/tecnico/ordenes/{orden_id}/cue")
+async def tecnico_upload_cue(
+    orden_id: str,
+    payload: OrdenCUEUpload,
+    tec: dict = Depends(require_tecnico),
+):
+    """El técnico sube la foto del CUE (Comprobante Único Electrónico) a la orden."""
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    if not payload.cue_base64:
+        raise HTTPException(status_code=400, detail="Foto CUE requerida")
+    compressed = compress_evidencia(payload.cue_base64)
+    set_data = {
+        "cue_base64": compressed,
+        "cue_uploaded_at": now_iso(),
+        "cue_uploaded_by": tec["id"],
+    }
+    if payload.notas is not None:
+        set_data["cue_notas"] = payload.notas
+    await ordenes_col.update_one({"id": orden_id}, {"$set": set_data})
+    o = await ordenes_col.find_one({"id": orden_id}, {"_id": 0})
+    return await enrich_orden(o)
+
+
+@api_router.delete("/tecnico/ordenes/{orden_id}/cue")
+async def tecnico_delete_cue(
+    orden_id: str, tec: dict = Depends(require_tecnico)
+):
+    """El técnico elimina la foto del CUE (ej. cargó la equivocada)."""
+    o = await ordenes_col.find_one({"id": orden_id})
+    if not o:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if o.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a esta orden")
+    await ordenes_col.update_one(
+        {"id": orden_id},
+        {"$unset": {"cue_base64": "", "cue_notas": "", "cue_uploaded_at": "", "cue_uploaded_by": ""}},
+    )
+    return {"ok": True}
 
 
 # Mount suministros sub-router (with /api prefix to match the main api_router)
