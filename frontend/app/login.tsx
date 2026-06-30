@@ -273,9 +273,6 @@ const styles = StyleSheet.create({
   brandLogo: {
     width: 230,
     height: 230,
-    ...(Platform.OS === "web"
-      ? ({ mixBlendMode: "lighten" } as any)
-      : {}),
   },
   brandName: {
     color: "#fff",
@@ -368,9 +365,6 @@ const styles = StyleSheet.create({
   mobileLogo: {
     width: 200,
     height: 200,
-    ...(Platform.OS === "web"
-      ? ({ mixBlendMode: "multiply" } as any)
-      : {}),
   },
 
   // ---- CARD ----

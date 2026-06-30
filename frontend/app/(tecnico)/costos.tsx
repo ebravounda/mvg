@@ -12,7 +12,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius, fontSize, shadow } from "@/src/theme";
 import { StickyHeader } from "@/src/components/StickyHeader";
@@ -67,7 +66,6 @@ function formatFechaCorta(iso: string): string {
 }
 
 export default function CostosTecnico() {
-  const router = useRouter();
   const [items, setItems] = useState<Costo[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -168,7 +166,6 @@ export default function CostosTecnico() {
   const onDelete = (c: Costo) => {
     const confirm = (ok: () => void) => {
       if (Platform.OS === "web") {
-        // eslint-disable-next-line no-alert
         if (window.confirm(`¿Eliminar "${c.nombre}" por ${formatCLP(c.total)}?`)) ok();
       } else {
         Alert.alert(
@@ -214,16 +211,7 @@ export default function CostosTecnico() {
       <StickyHeader
         title="Costos del día"
         subtitle="Traslados, combustible, alimento, materiales"
-        leftSlot={
-          <TouchableOpacity
-            testID="costos-back-btn"
-            onPress={() => router.back()}
-            style={styles.backBtn}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="chevron-back" size={22} color={colors.textMain} />
-          </TouchableOpacity>
-        }
+        showBack
         rightSlot={
           <TouchableOpacity
             testID="costos-add-btn"

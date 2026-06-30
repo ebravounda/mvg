@@ -141,9 +141,6 @@ const styles = StyleSheet.create({
   logo: {
     width: 60,
     height: 44,
-    ...(Platform.OS === "web"
-      ? ({ mixBlendMode: "multiply" } as any)
-      : {}),
   },
   title: {
     color: colors.textMain,

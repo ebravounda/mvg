@@ -51,6 +51,7 @@ clientes_col = db.clientes
 sucursales_col = db.sucursales
 ordenes_col = db.ordenes
 costos_col = db.costos
+counters_col = db.counters
 
 
 # ----------------- Image compression -----------------
@@ -1127,22 +1128,366 @@ async def upload_ordenes_excel(
     file: UploadFile = File(...),
     fecha_limite: Optional[str] = Form(None),
     prioridad: str = Form("media"),
+    geocode: bool = Form(False, description="Si true, geocodifica nuevas sucursales (lento)"),
     admin: dict = Depends(require_admin),
 ):
     """Upload Excel file (BASE FEMSA REGIONES style) to bulk-create ordenes.
 
-    Strategy:
-      - Sheet "FEMSA" (if present): master inventory of pin pads
-        Columns: RUT, NOM_RAZON_SOCIAL, NOM_FANTASIA, CC, DIRECCION, COMUNA,
-                 #REGION, M_MODELO, SERIEPI, DDLL
-      - Sheet "CC" (if present): work orders to create (one orden per row).
-        Columns include: RUT, NOM_RAZON_SOCIAL, NOM_FANTASIA, CC, DIRECCION,
-                         COMUNA, #REGION, Cantidad, Fecha
-      - For each CC row: locate matching pin pads from FEMSA inventory by
-        (rut, CC); create ONE orden with that list of pin_pads.
-      - If only FEMSA exists: group its rows by (rut, CC) and create one
-        orden per group with all its pin pads.
+    Optimizado para miles de pinpads (3000+):
+      - Contador atómico para `numero` (en vez de count_documents por fila)
+      - Bulk lookup de clientes/sucursales existentes (sets en memoria)
+      - Bulk insert con insert_many (chunks de 500)
+      - Geocoding desactivado por defecto (usar /admin/geocode/sucursales luego)
     """
+    if prioridad not in ("baja", "media", "alta"):
+        prioridad = "media"
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel inválido: {e}")
+
+    sheet_femsa = None
+    sheet_cc = None
+    for s in wb.sheetnames:
+        low = s.strip().lower()
+        if low == "femsa":
+            sheet_femsa = s
+        elif low == "cc":
+            sheet_cc = s
+    if not sheet_femsa and not sheet_cc:
+        sheet_femsa = wb.sheetnames[0]
+
+    def make_cell_fn(headers_row):
+        h = [str(h).strip() if h is not None else "" for h in headers_row]
+        idx = {x.upper(): i for i, x in enumerate(h)}
+
+        def get(row, name):
+            i = idx.get(name.upper())
+            if i is None or i >= len(row):
+                return None
+            v = row[i]
+            if v is None:
+                return None
+            if hasattr(v, "isoformat"):
+                try:
+                    return v.date().isoformat() if hasattr(v, "date") else v.isoformat()
+                except Exception:
+                    return str(v)
+            s = str(v).strip()
+            return s if s else None
+
+        return get
+
+    # 1) Construir inventario FEMSA en memoria
+    inventory: dict = {}
+    if sheet_femsa:
+        ws = wb[sheet_femsa]
+        rows = list(ws.iter_rows(values_only=True))
+        if rows:
+            get = make_cell_fn(rows[0])
+            for row in rows[1:]:
+                if not row or all(c is None for c in row):
+                    continue
+                rut = get(row, "RUT")
+                razon = get(row, "NOM_RAZON_SOCIAL")
+                cc = get(row, "CC")
+                if not cc:
+                    continue
+                modelo = get(row, "M_MODELO") or get(row, "MODELO")
+                serie = get(row, "SERIEPI") or get(row, "SERIE")
+                ddll = get(row, "DDLL")
+                if not (serie or ddll):
+                    continue
+                key = ((rut or razon or "").strip(), cc.strip())
+                inventory.setdefault(key, []).append(
+                    {
+                        "serie": serie,
+                        "modelo": modelo,
+                        "ddll": ddll,
+                    }
+                )
+
+    summary = {
+        "total_rows": 0,
+        "ordenes_creadas": 0,
+        "clientes_creados": 0,
+        "comercios_creados": 0,
+        "pin_pads_total": 0,
+        "errores": [],
+        "tiempo_ms": 0,
+        "geocoding_pendiente": 0,
+    }
+
+    import time as _time
+    t0 = _time.time()
+
+    # 2) Recoger filas a procesar (CC o FEMSA)
+    rows_a_procesar = []
+    if sheet_cc:
+        ws = wb[sheet_cc]
+        rows = list(ws.iter_rows(values_only=True))
+        if rows:
+            get = make_cell_fn(rows[0])
+            for row in rows[1:]:
+                if not row or all(c is None for c in row):
+                    continue
+                cc = get(row, "CC")
+                if not cc:
+                    summary["errores"].append("Fila sin CC")
+                    continue
+                summary["total_rows"] += 1
+                rut = get(row, "RUT")
+                razon = get(row, "NOM_RAZON_SOCIAL")
+                fantasia = get(row, "NOM_FANTASIA")
+                direccion = get(row, "DIRECCION")
+                comuna = get(row, "COMUNA")
+                region = get(row, "#REGION") or get(row, "REGION")
+                fecha_row = get(row, "Fecha") or get(row, "FECHA")
+                rows_a_procesar.append({
+                    "rut": rut, "razon": razon, "fantasia": fantasia,
+                    "cc": cc, "direccion": direccion, "comuna": comuna,
+                    "region": region, "fecha_lim": fecha_row or fecha_limite,
+                    "pin_pads": list(inventory.get(((rut or razon or "").strip(), cc.strip()), [])),
+                })
+    else:
+        # Solo FEMSA → agrupar por (rut, cc)
+        groups: dict = {}
+        ws = wb[sheet_femsa]
+        rows = list(ws.iter_rows(values_only=True))
+        if rows:
+            get = make_cell_fn(rows[0])
+            for row in rows[1:]:
+                if not row or all(c is None for c in row):
+                    continue
+                summary["total_rows"] += 1
+                rut = get(row, "RUT")
+                razon = get(row, "NOM_RAZON_SOCIAL")
+                fantasia = get(row, "NOM_FANTASIA")
+                cc = get(row, "CC")
+                if not cc:
+                    continue
+                direccion = get(row, "DIRECCION")
+                comuna = get(row, "COMUNA")
+                region = get(row, "#REGION") or get(row, "REGION")
+                modelo = get(row, "M_MODELO")
+                serie = get(row, "SERIEPI")
+                ddll = get(row, "DDLL")
+                gkey = ((rut or razon or "").strip(), cc.strip())
+                g = groups.setdefault(gkey, {
+                    "rut": rut, "razon": razon, "fantasia": fantasia,
+                    "cc": cc, "direccion": direccion, "comuna": comuna,
+                    "region": region, "fecha_lim": fecha_limite,
+                    "pin_pads": [],
+                })
+                if serie or ddll:
+                    g["pin_pads"].append({"serie": serie, "modelo": modelo, "ddll": ddll})
+        rows_a_procesar = list(groups.values())
+
+    if not rows_a_procesar:
+        summary["tiempo_ms"] = int((_time.time() - t0) * 1000)
+        return summary
+
+    # 3) BULK LOOKUP de clientes y sucursales existentes
+    ruts = list({r["rut"] for r in rows_a_procesar if r["rut"]})
+    razones = list({r["razon"] for r in rows_a_procesar if r["razon"]})
+    existing_clients_q = []
+    if ruts:
+        existing_clients_q.append({"rut": {"$in": ruts}})
+    if razones:
+        existing_clients_q.append({"nombre": {"$in": razones}})
+
+    cli_by_rut: dict = {}
+    cli_by_nombre: dict = {}
+    if existing_clients_q:
+        async for c in clientes_col.find({"$or": existing_clients_q}, {"_id": 0}):
+            if c.get("rut"):
+                cli_by_rut[c["rut"]] = c
+            if c.get("nombre"):
+                cli_by_nombre[c["nombre"]] = c
+
+    def get_cliente_local(rut, razon):
+        if rut and rut in cli_by_rut:
+            return cli_by_rut[rut]
+        if razon and razon in cli_by_nombre:
+            return cli_by_nombre[razon]
+        return None
+
+    # Crear clientes faltantes (bulk)
+    clientes_nuevos = []
+    seen_keys = set()
+    for r in rows_a_procesar:
+        if get_cliente_local(r["rut"], r["razon"]):
+            continue
+        key = (r["rut"] or r["razon"] or "").strip()
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        nuevo = {
+            "id": str(uuid.uuid4()),
+            "nombre": r["razon"] or r["fantasia"] or "Cliente sin nombre",
+            "nombre_fantasia": r["fantasia"],
+            "rut": r["rut"],
+            "contacto": None, "email": None, "telefono": None, "direccion": None,
+            "created_at": now_iso(),
+        }
+        clientes_nuevos.append(nuevo)
+        if nuevo.get("rut"):
+            cli_by_rut[nuevo["rut"]] = nuevo
+        if nuevo.get("nombre"):
+            cli_by_nombre[nuevo["nombre"]] = nuevo
+    if clientes_nuevos:
+        await clientes_col.insert_many(clientes_nuevos, ordered=False)
+        summary["clientes_creados"] = len(clientes_nuevos)
+
+    # Bulk lookup de sucursales por (cliente_id, cc)
+    cliente_ids_set = set()
+    for r in rows_a_procesar:
+        c = get_cliente_local(r["rut"], r["razon"])
+        if c:
+            cliente_ids_set.add(c["id"])
+    suc_by_key: dict = {}
+    if cliente_ids_set:
+        async for s in sucursales_col.find(
+            {"cliente_id": {"$in": list(cliente_ids_set)}},
+            {"_id": 0},
+        ):
+            suc_by_key[(s.get("cliente_id"), (s.get("codigo_comercio") or "").strip())] = s
+
+    # Crear sucursales faltantes (bulk, sin geocoding por defecto)
+    sucs_nuevas = []
+    sucs_sin_coords = []  # para geocoding posterior
+    for r in rows_a_procesar:
+        c = get_cliente_local(r["rut"], r["razon"])
+        if not c:
+            continue
+        cc_key = (c["id"], r["cc"].strip())
+        if cc_key in suc_by_key:
+            continue
+        nueva = {
+            "id": str(uuid.uuid4()),
+            "cliente_id": c["id"],
+            "nombre": (r["fantasia"] or r["razon"] or "") + f" - {r['cc']}",
+            "codigo_comercio": r["cc"],
+            "direccion": r["direccion"],
+            "comuna": r["comuna"],
+            "region": r["region"],
+            "lat": None, "lng": None,
+            "telefono": None, "encargado": None,
+            "created_at": now_iso(),
+        }
+        sucs_nuevas.append(nueva)
+        suc_by_key[cc_key] = nueva
+        if r["direccion"]:
+            sucs_sin_coords.append(nueva["id"])
+    if sucs_nuevas:
+        await sucursales_col.insert_many(sucs_nuevas, ordered=False)
+        summary["comercios_creados"] = len(sucs_nuevas)
+
+    # 4) Contador atómico para numero de orden (reemplaza count_documents)
+    year = datetime.now().year
+    counter_doc = await counters_col.find_one_and_update(
+        {"_id": f"orden_numero_{year}"},
+        {"$inc": {"seq": len(rows_a_procesar)}},
+        upsert=True, return_document=True,
+    )
+    seq_end = counter_doc.get("seq", len(rows_a_procesar))
+    seq_start = seq_end - len(rows_a_procesar) + 1
+
+    # 5) Construir ordenes en memoria y bulk insert
+    ordenes_docs = []
+    for i, r in enumerate(rows_a_procesar):
+        c = get_cliente_local(r["rut"], r["razon"])
+        if not c:
+            summary["errores"].append(f"CC {r['cc']}: cliente no resuelto")
+            continue
+        suc = suc_by_key.get((c["id"], r["cc"].strip()))
+        if not suc:
+            summary["errores"].append(f"CC {r['cc']}: sucursal no resuelta")
+            continue
+        fresh_pp = [
+            {
+                "id": str(uuid.uuid4()),
+                "serie": pp.get("serie"),
+                "modelo": pp.get("modelo"),
+                "ddll": pp.get("ddll"),
+                "completed": False,
+                "evidencia_base64": None,
+                "notas": None,
+                "completed_at": None,
+            }
+            for pp in (r["pin_pads"] or [])
+        ]
+        numero = f"OS-{year}-{(seq_start + i):04d}"
+        num_pp = len(fresh_pp)
+        ordenes_docs.append({
+            "id": str(uuid.uuid4()),
+            "numero": numero,
+            "cliente_id": c["id"],
+            "sucursal_id": suc["id"],
+            "tecnico_id": None,
+            "titulo": f"Actualización Pin Pads · CC {r['cc']}",
+            "descripcion": (
+                f"Actualizar {num_pp} pin pad{'s' if num_pp != 1 else ''} en el "
+                f"comercio CC {r['cc']} ({r['direccion'] or '—'})."
+            ),
+            "prioridad": prioridad,
+            "serie": None, "modelo": None, "ddll": None,
+            "fecha_limite": r["fecha_lim"],
+            "estado": "pendiente",
+            "evidencia_base64": None,
+            "notas_tecnico": None,
+            "pin_pads": fresh_pp,
+            "created_by": admin["id"],
+            "created_at": now_iso(),
+            "started_at": None, "finalized_at": None,
+            "whatsapp_last": None,
+        })
+        summary["pin_pads_total"] += num_pp
+
+    # Bulk insert en chunks de 500
+    CHUNK = 500
+    for i in range(0, len(ordenes_docs), CHUNK):
+        chunk = ordenes_docs[i:i + CHUNK]
+        try:
+            await ordenes_col.insert_many(chunk, ordered=False)
+            summary["ordenes_creadas"] += len(chunk)
+        except Exception as e:
+            summary["errores"].append(f"Chunk {i}: {str(e)[:120]}")
+
+    # 6) Geocoding opcional (solo si se pidió explícitamente)
+    summary["geocoding_pendiente"] = len(sucs_sin_coords)
+    if geocode and sucs_sin_coords:
+        geocoded = 0
+        for suc_id in sucs_sin_coords[:200]:  # tope para no bloquear
+            try:
+                suc = await sucursales_col.find_one({"id": suc_id}, {"_id": 0})
+                if not suc:
+                    continue
+                res = await geocode_address(
+                    db, suc.get("direccion"), suc.get("comuna"), suc.get("region")
+                )
+                if res:
+                    lat, lng, _ = res
+                    await sucursales_col.update_one(
+                        {"id": suc_id}, {"$set": {"lat": lat, "lng": lng}}
+                    )
+                    geocoded += 1
+            except Exception as e:
+                logger.warning("[upload geocode] %s err: %s", suc_id, e)
+        summary["geocoded"] = geocoded
+        summary["geocoding_pendiente"] = len(sucs_sin_coords) - geocoded
+
+    summary["tiempo_ms"] = int((_time.time() - t0) * 1000)
+
+    # Auto-asignación masiva si está habilitada
+    try:
+        auto = await _auto_assign_if_enabled()
+        summary["auto_asignacion"] = auto
+    except Exception as e:
+        logger.warning("[auto_assign post-upload] err: %s", e)
+
+    return summary
     if prioridad not in ("baja", "media", "alta"):
         prioridad = "media"
     content = await file.read()

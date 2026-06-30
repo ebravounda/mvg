@@ -26,7 +26,18 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "MVG Computación",
+      "shortName": "MVG",
+      "lang": "es-CL",
+      "themeColor": "#0B1121",
+      "backgroundColor": "#000000",
+      "display": "standalone",
+      "orientation": "portrait",
+      "scope": "/",
+      "startUrl": "/",
+      "description": "MVG Computación · Gestión de órdenes de servicio técnico, pin pads, inventario y rutas para terreno.",
+      "preferRelatedApplications": false
     },
     "plugins": [
       "expo-router",

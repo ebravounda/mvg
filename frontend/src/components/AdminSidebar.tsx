@@ -12,6 +12,7 @@ const NAV: { label: string; icon: any; route: string; match: string[] }[] = [
   { label: "Comercios", icon: "storefront-outline", route: "/(admin)/comercios", match: ["/comercios", "/(admin)/comercios"] },
   { label: "Técnicos", icon: "people-outline", route: "/(admin)/tecnicos", match: ["/tecnicos", "/(admin)/tecnicos"] },
   { label: "Suministros", icon: "cube-outline", route: "/(admin)/suministros", match: ["/suministros", "/(admin)/suministros"] },
+  { label: "Costos", icon: "cash-outline", route: "/(admin)/costos", match: ["/costos", "/(admin)/costos"] },
   { label: "Disponibilidad", icon: "calendar-outline", route: "/(admin)/disponibilidad", match: ["/disponibilidad", "/(admin)/disponibilidad"] },
 ];
 
@@ -123,9 +124,6 @@ const styles = StyleSheet.create({
   brandLogo: {
     width: 150,
     height: 100,
-    ...(Platform.OS === "web"
-      ? ({ mixBlendMode: "lighten" } as any)
-      : {}),
   },
   brandTitle: {
     color: colors.sidebarTextActive,
