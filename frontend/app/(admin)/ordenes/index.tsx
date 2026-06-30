@@ -34,6 +34,68 @@ const FILTERS = [
   { label: "Finalizadas", value: "finalizada" },
 ];
 
+function FilterSelect({
+  value,
+  onChange,
+  options,
+  testID,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  testID?: string;
+}) {
+  if (Platform.OS === "web") {
+    return (
+      <select
+        // @ts-expect-error rn-web acepta esto
+        value={value}
+        onChange={(e: any) => onChange(e.target.value)}
+        data-testid={testID}
+        style={{
+          border: `1px solid ${colors.border}`,
+          borderRadius: 8,
+          padding: "8px 10px",
+          fontSize: 13,
+          color: colors.textMain,
+          backgroundColor: "#fff",
+          outline: "none",
+          minWidth: 140,
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  // Mobile: tap cycles entre opciones
+  return (
+    <TouchableOpacity
+      onPress={() => {
+        const idx = options.findIndex((o) => o.value === value);
+        const next = options[(idx + 1) % options.length];
+        onChange(next.value);
+      }}
+      style={{
+        backgroundColor: "#fff",
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+      }}
+      testID={testID}
+    >
+      <Text style={{ color: colors.textMain, fontSize: 13 }}>
+        {options.find((o) => o.value === value)?.label || "—"}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function OrdenesList() {
   const router = useRouter();
   const params = useLocalSearchParams<{ action?: string }>();
@@ -84,25 +146,78 @@ export default function OrdenesList() {
   const [bulkAssigning, setBulkAssigning] = useState(false);
   const [autoMasivoLoading, setAutoMasivoLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      let url = "/admin/ordenes";
-      if (filter && filter !== "sin_asignar") {
-        url += `?estado=${filter}`;
+  // Filtros server-side (paginación)
+  const [filterCliente, setFilterCliente] = useState<string>("");
+  const [filterComuna, setFilterComuna] = useState<string>("");
+  const [filterRegion, setFilterRegion] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [pageLimit] = useState(100);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filtroOptions, setFiltroOptions] = useState<{
+    comunas: string[];
+    regiones: string[];
+    clientes: { id: string; nombre: string; nombre_fantasia?: string; rut?: string }[];
+  }>({ comunas: [], regiones: [], clientes: [] });
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Cargar opciones de filtros (se hace una sola vez)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/admin/ordenes/filtros");
+        setFiltroOptions(r.data);
+      } catch (e) {
+        console.log("filtros opts err", e);
       }
-      const r = await api.get(url);
-      let data = r.data;
-      if (filter === "sin_asignar") {
-        data = data.filter((o: any) => !o.tecnico_id);
+    })();
+  }, []);
+
+  const load = useCallback(
+    async (overridePage?: number) => {
+      try {
+        const params = new URLSearchParams();
+        params.append("paginated", "true");
+        params.append("limit", String(pageLimit));
+        params.append("page", String(overridePage ?? page));
+        if (filter && filter !== "sin_asignar") params.append("estado", filter);
+        if (filterCliente) params.append("cliente_id", filterCliente);
+        if (filterComuna) params.append("comuna", filterComuna);
+        if (filterRegion) params.append("region", filterRegion);
+        if (query.trim()) params.append("search", query.trim());
+
+        const r = await api.get(`/admin/ordenes?${params.toString()}`);
+        let data: any[] = r.data?.items || [];
+        if (filter === "sin_asignar") {
+          // este filtro sigue siendo client-side (no hay query mongo simple)
+          data = data.filter((o: any) => !o.tecnico_id);
+        }
+        setItems(data);
+        setTotalCount(r.data?.total || 0);
+        setTotalPages(r.data?.total_pages || 1);
+      } catch (e) {
+        console.log("ordenes load err", e);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      setItems(data);
-    } catch (e) {
-      console.log("ordenes load err", e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [filter]);
+    },
+    [filter, filterCliente, filterComuna, filterRegion, query, page, pageLimit]
+  );
+
+  // Recarga al cambiar filtros (volver a página 1)
+  useEffect(() => {
+    setPage(1);
+  }, [filter, filterCliente, filterComuna, filterRegion, query]);
+
+  // Debounce de búsqueda (300ms) — solo aplica para query
+  useEffect(() => {
+    const t = setTimeout(() => {
+      load(1);
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   useFocusEffect(
     useCallback(() => {
@@ -561,7 +676,7 @@ export default function OrdenesList() {
                 testID="ordenes-search"
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Buscar por CC, dirección, comuna, técnico..."
+                placeholder="Buscar por número de orden o título…"
                 placeholderTextColor={colors.textDim}
                 style={styles.searchInput}
                 autoCapitalize="none"
@@ -572,6 +687,84 @@ export default function OrdenesList() {
                 </TouchableOpacity>
               )}
             </View>
+            <TouchableOpacity
+              testID="toggle-filtros-btn"
+              style={[styles.headerSecondary, (filterCliente || filterComuna || filterRegion) && {
+                borderColor: colors.primary,
+                backgroundColor: colors.primarySoft,
+              }]}
+              onPress={() => setShowFilters((v) => !v)}
+            >
+              <Ionicons name="funnel-outline" size={14} color={colors.primary} />
+              <Text style={styles.headerSecondaryText}>
+                Filtros{
+                  [filterCliente, filterComuna, filterRegion].filter(Boolean).length > 0
+                    ? ` (${[filterCliente, filterComuna, filterRegion].filter(Boolean).length})`
+                    : ""
+                }
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {showFilters && (
+            <View style={styles.filtersBox} testID="filtros-box">
+              <View style={styles.filterCol}>
+                <Text style={styles.filterLabel}>Cliente</Text>
+                <FilterSelect
+                  value={filterCliente}
+                  onChange={setFilterCliente}
+                  options={[
+                    { value: "", label: "Todos" },
+                    ...filtroOptions.clientes.map((c) => ({
+                      value: c.id,
+                      label: c.nombre_fantasia || c.nombre,
+                    })),
+                  ]}
+                  testID="filtro-cliente"
+                />
+              </View>
+              <View style={styles.filterCol}>
+                <Text style={styles.filterLabel}>Comuna</Text>
+                <FilterSelect
+                  value={filterComuna}
+                  onChange={setFilterComuna}
+                  options={[
+                    { value: "", label: "Todas" },
+                    ...filtroOptions.comunas.map((c) => ({ value: c, label: c })),
+                  ]}
+                  testID="filtro-comuna"
+                />
+              </View>
+              <View style={styles.filterCol}>
+                <Text style={styles.filterLabel}>Región</Text>
+                <FilterSelect
+                  value={filterRegion}
+                  onChange={setFilterRegion}
+                  options={[
+                    { value: "", label: "Todas" },
+                    ...filtroOptions.regiones.map((r) => ({ value: r, label: r })),
+                  ]}
+                  testID="filtro-region"
+                />
+              </View>
+              {(filterCliente || filterComuna || filterRegion) && (
+                <TouchableOpacity
+                  testID="limpiar-filtros-btn"
+                  onPress={() => {
+                    setFilterCliente("");
+                    setFilterComuna("");
+                    setFilterRegion("");
+                  }}
+                  style={styles.clearFiltersBtn}
+                >
+                  <Ionicons name="close-circle" size={14} color={colors.danger} />
+                  <Text style={{ color: colors.danger, fontWeight: "700", fontSize: 12 }}>
+                    Limpiar
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
             <View style={styles.sortInlineRow}>
               <Text style={styles.sortLabel}>Ordenar:</Text>
               {[
@@ -606,7 +799,6 @@ export default function OrdenesList() {
                 );
               })}
             </View>
-          </View>
         </View>
       ) : (
         <>
@@ -723,7 +915,7 @@ export default function OrdenesList() {
         >
           <View style={styles.tableSummary}>
             <Text style={styles.tableSummaryText}>
-              {filteredItems.length} {filteredItems.length === 1 ? "orden" : "órdenes"}
+              {filteredItems.length} mostradas · {totalCount} total
               {groupBy === "region_comuna" && groupedData.groups.length > 0 && (
                 <Text style={{ color: colors.textMuted }}>
                   {" "}
@@ -925,6 +1117,32 @@ export default function OrdenesList() {
                 </TouchableOpacity>
                 );
               })
+            )}
+            {/* Paginación desktop */}
+            {totalPages > 1 && (
+              <View style={styles.pagination} testID="pagination-desktop">
+                <TouchableOpacity
+                  testID="page-prev-btn"
+                  style={[styles.pageBtn, page <= 1 && { opacity: 0.4 }]}
+                  disabled={page <= 1}
+                  onPress={() => { setPage(page - 1); load(page - 1); }}
+                >
+                  <Ionicons name="chevron-back" size={14} color={colors.textMain} />
+                  <Text style={styles.pageBtnText}>Anterior</Text>
+                </TouchableOpacity>
+                <Text style={styles.pageInfo}>
+                  Página {page} de {totalPages}
+                </Text>
+                <TouchableOpacity
+                  testID="page-next-btn"
+                  style={[styles.pageBtn, page >= totalPages && { opacity: 0.4 }]}
+                  disabled={page >= totalPages}
+                  onPress={() => { setPage(page + 1); load(page + 1); }}
+                >
+                  <Text style={styles.pageBtnText}>Siguiente</Text>
+                  <Ionicons name="chevron-forward" size={14} color={colors.textMain} />
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </ScrollView>
@@ -1831,4 +2049,55 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     fontWeight: "700",
   },
+  filtersBox: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.md,
+    marginTop: 6,
+    alignItems: "flex-end",
+  },
+  filterCol: { minWidth: 160, gap: 4 },
+  filterLabel: {
+    color: colors.textMuted,
+    fontSize: fontSize.xs,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  clearFiltersBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: 8,
+  },
+  pagination: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: spacing.md,
+    borderTopWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
+  pageBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+  },
+  pageBtnText: { color: colors.textMain, fontWeight: "700", fontSize: fontSize.xs },
+  pageInfo: { color: colors.textMain, fontWeight: "700", fontSize: fontSize.sm },
 });
