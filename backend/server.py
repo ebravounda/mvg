@@ -770,6 +770,12 @@ async def _send_assignment_whatsapp(orden_id: str) -> dict:
         prioridad=o.get("prioridad", "media"),
         fecha_limite=o.get("fecha_limite"),
         pin_pads=o.get("pin_pads") or [],
+        rut=cliente.get("rut"),
+        razon_social=cliente.get("nombre"),
+        nombre_fantasia=cliente.get("nombre_fantasia"),
+        comuna=sucursal.get("comuna"),
+        region=sucursal.get("region"),
+        fecha_ejecucion=o.get("fecha_ejecucion"),
     )
     result = await send_whatsapp(tecnico.get("telefono"), msg)
     # store last notification result on the order

@@ -114,10 +114,18 @@ def build_assignment_message(
     prioridad: str,
     fecha_limite: Optional[str],
     pin_pads: Optional[list] = None,
+    rut: Optional[str] = None,
+    razon_social: Optional[str] = None,
+    nombre_fantasia: Optional[str] = None,
+    comuna: Optional[str] = None,
+    region: Optional[str] = None,
+    fecha_ejecucion: Optional[str] = None,
 ) -> str:
     fecha_str = ""
+    if fecha_ejecucion:
+        fecha_str += f"\n🗓️ Fecha de ejecución: {fecha_ejecucion}"
     if fecha_limite:
-        fecha_str = f"\n📅 Fecha límite: {fecha_limite}"
+        fecha_str += f"\n📅 Fecha límite: {fecha_limite}"
 
     pp_section = ""
     if pin_pads:
@@ -125,19 +133,44 @@ def build_assignment_message(
         for i, pp in enumerate(pin_pads, start=1):
             ddll = (pp.get("ddll") or "").strip() or "—"
             serie = (pp.get("serie") or "").strip()
-            extra = f" (S/N {serie})" if serie else ""
-            lines.append(f"  {i}. {ddll}{extra}")
+            modelo = (pp.get("modelo") or "").strip()
+            extras = []
+            if serie:
+                extras.append(f"S/N {serie}")
+            if modelo:
+                extras.append(modelo)
+            extra_txt = f" ({' · '.join(extras)})" if extras else ""
+            lines.append(f"  {i}. DDLL {ddll}{extra_txt}")
         pp_section = (
-            f"\n\n📟 Pin Pads a actualizar ({len(pin_pads)}):\n" + "\n".join(lines)
+            f"\n\n📟 *Pin Pads a actualizar ({len(pin_pads)}):*\n" + "\n".join(lines)
         )
+
+    # --- Bloque comercio ---
+    comercio_lines = [f"🏪 *Comercio*"]
+    comercio_lines.append(f"  • CC: {codigo_comercio or '—'}")
+    if rut:
+        comercio_lines.append(f"  • RUT: {rut}")
+    razon = razon_social or cliente
+    if razon:
+        comercio_lines.append(f"  • Razón social: {razon}")
+    if nombre_fantasia and nombre_fantasia.strip().lower() != (razon or "").strip().lower():
+        comercio_lines.append(f"  • Nombre fantasía: {nombre_fantasia}")
+    comercio_block = "\n".join(comercio_lines)
+
+    # --- Bloque dirección ---
+    dir_parts = [direccion]
+    if comuna:
+        dir_parts.append(comuna)
+    if region:
+        dir_parts.append(region)
+    direccion_full = ", ".join([p for p in dir_parts if p])
 
     return (
         f"🛠️ *Nueva orden asignada*\n\n"
         f"Hola {tecnico_nombre},\n"
         f"Se te asignó la orden *{numero}*.\n\n"
-        f"🏢 Cliente: {cliente}\n"
-        f"🏪 Comercio: {comercio} (CC {codigo_comercio})\n"
-        f"📍 Dirección: {direccion}\n"
+        f"{comercio_block}\n\n"
+        f"📍 Dirección: {direccion_full}\n"
         f"⚠️ Prioridad: {prioridad.upper()}"
         f"{fecha_str}"
         f"{pp_section}\n\n"
