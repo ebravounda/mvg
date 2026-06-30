@@ -380,6 +380,60 @@ async def enrich_orden(o: dict) -> dict:
     }
 
 
+async def enrich_ordenes_batch(ordenes: list, light: bool = False) -> list:
+    """Batch-fetch related cliente/sucursal/tecnico for a list of orders.
+
+    Reduces queries from 3·N to just 3 (huge speedup for large lists).
+    Si ``light`` es True, se devuelven proyecciones mínimas (ideal para
+    listados con miles de filas).
+    """
+    if not ordenes:
+        return []
+
+    cliente_ids = {o.get("cliente_id") for o in ordenes if o.get("cliente_id")}
+    sucursal_ids = {o.get("sucursal_id") for o in ordenes if o.get("sucursal_id")}
+    tecnico_ids = {o.get("tecnico_id") for o in ordenes if o.get("tecnico_id")}
+
+    if light:
+        cli_proj = {"_id": 0, "id": 1, "nombre": 1, "nombre_fantasia": 1, "rut": 1}
+        suc_proj = {
+            "_id": 0, "id": 1, "codigo_comercio": 1, "comuna": 1, "region": 1,
+            "direccion": 1, "nombre": 1, "lat": 1, "lng": 1, "cliente_id": 1,
+        }
+        tec_proj = {
+            "_id": 0, "id": 1, "nombre": 1, "apellidos": 1, "telefono": 1,
+            "email": 1, "comuna": 1,
+        }
+    else:
+        cli_proj = {"_id": 0}
+        suc_proj = {"_id": 0}
+        tec_proj = {"_id": 0, "hashed_password": 0}
+
+    clientes_map: dict = {}
+    sucursales_map: dict = {}
+    tecnicos_map: dict = {}
+
+    if cliente_ids:
+        async for c in clientes_col.find({"id": {"$in": list(cliente_ids)}}, cli_proj):
+            clientes_map[c["id"]] = c
+    if sucursal_ids:
+        async for s in sucursales_col.find({"id": {"$in": list(sucursal_ids)}}, suc_proj):
+            sucursales_map[s["id"]] = s
+    if tecnico_ids:
+        async for t in users_col.find({"id": {"$in": list(tecnico_ids)}}, tec_proj):
+            tecnicos_map[t["id"]] = t
+
+    result = []
+    for o in ordenes:
+        result.append({
+            **{k: v for k, v in o.items() if k != "_id"},
+            "cliente": clientes_map.get(o.get("cliente_id")),
+            "sucursal": sucursales_map.get(o.get("sucursal_id")),
+            "tecnico": tecnicos_map.get(o.get("tecnico_id")),
+        })
+    return result
+
+
 # ----------------- Auth Routes -----------------
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(payload: LoginRequest):
@@ -1558,16 +1612,17 @@ async def list_ordenes_admin(
     region: Optional[str] = Query(None),
     search: Optional[str] = Query(None, description="numero/titulo/CC"),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=10000),
     paginated: bool = Query(False, description="si true, devuelve {items,total,page,limit}"),
+    compact: bool = Query(False, description="omite campos pesados (pin_pads/fotos/cue) y enriquece liviano"),
     _: dict = Depends(require_admin),
 ):
     """Listado de órdenes con filtros server-side e índices.
 
-    Compat: por defecto devuelve lista (como antes) limitada a ``limit``
-    para no traer todas. Pasa ``paginated=true`` para recibir
-    ``{items, total, page, limit, total_pages}`` (recomendado en producción
-    con miles de órdenes).
+    - ``paginated=true`` → respuesta ``{items,total,page,limit,total_pages}``.
+    - ``compact=true``  → excluye campos pesados (pin_pads, signatures,
+      cue_base64, etc.) y devuelve enriquecimiento mínimo. Pensado para
+      vistas tipo lista/acordeón con miles de filas.
     """
     q: dict = {}
     if estado:
@@ -1591,14 +1646,21 @@ async def list_ordenes_admin(
             suc_query["comuna"] = {"$regex": f"^{comuna}$", "$options": "i"}
         if region:
             suc_query["region"] = {"$regex": f"^{region}$", "$options": "i"}
-        suc_ids = await sucursales_col.find(suc_query, {"id": 1}).to_list(5000)
+        suc_ids = await sucursales_col.find(suc_query, {"id": 1}).to_list(20000)
         suc_id_list = [s["id"] for s in suc_ids]
         if not suc_id_list:
-            # nada coincide → retornar vacío
             if paginated:
                 return {"items": [], "total": 0, "page": page, "limit": limit, "total_pages": 0}
             return []
-        q["sucursal_id"] = {"$in": suc_id_list}
+        if "sucursal_id" in q and isinstance(q["sucursal_id"], str):
+            # combinar con cliente filter previo: ambas condiciones
+            q["sucursal_id"] = {"$in": [q["sucursal_id"]] if q["sucursal_id"] in suc_id_list else []}
+            if not q["sucursal_id"]["$in"]:
+                if paginated:
+                    return {"items": [], "total": 0, "page": page, "limit": limit, "total_pages": 0}
+                return []
+        else:
+            q["sucursal_id"] = {"$in": suc_id_list}
 
     # Búsqueda por número de orden o título (regex insensitive)
     if search:
@@ -1608,16 +1670,30 @@ async def list_ordenes_admin(
             {"titulo": search_re},
         ]
 
+    # Proyección base: en modo compact, excluimos campos pesados
+    projection: dict = {"_id": 0}
+    if compact:
+        projection.update({
+            "pin_pads": 0,
+            "cue_base64": 0,
+            "signature_base64": 0,
+            "firma_base64": 0,
+            "foto_antes_base64": 0,
+            "foto_despues_base64": 0,
+            "foto_descarga_master_base64": 0,
+            "foto_comprobante_venta_base64": 0,
+        })
+
     total = await ordenes_col.count_documents(q)
     skip = (page - 1) * limit
     cursor = (
-        ordenes_col.find(q, {"_id": 0})
+        ordenes_col.find(q, projection)
         .sort("created_at", -1)
         .skip(skip)
         .limit(limit)
     )
     items = await cursor.to_list(limit)
-    enriched = [await enrich_orden(o) for o in items]
+    enriched = await enrich_ordenes_batch(items, light=compact)
 
     if paginated:
         total_pages = (total + limit - 1) // limit if limit else 1
@@ -1634,8 +1710,8 @@ async def list_ordenes_admin(
 @api_router.get("/admin/ordenes/filtros")
 async def list_ordenes_filtros(_: dict = Depends(require_admin)):
     """Devuelve listas únicas de comunas, regiones y clientes para los filtros."""
-    comunas = await sucursales_col.distinct("comuna", {"comuna": {"$ne": None, "$ne": ""}})
-    regiones = await sucursales_col.distinct("region", {"region": {"$ne": None, "$ne": ""}})
+    comunas = await sucursales_col.distinct("comuna", {"comuna": {"$nin": [None, ""]}})
+    regiones = await sucursales_col.distinct("region", {"region": {"$nin": [None, ""]}})
     clientes = await clientes_col.find(
         {}, {"_id": 0, "id": 1, "nombre": 1, "nombre_fantasia": 1, "rut": 1}
     ).sort("nombre", 1).to_list(2000)
@@ -2834,12 +2910,15 @@ async def on_startup():
     # Índices clave para listado de órdenes con filtros (rendimiento con 10k+ docs)
     await ordenes_col.create_index("created_at")
     await ordenes_col.create_index([("estado", 1), ("created_at", -1)])
+    await ordenes_col.create_index([("cliente_id", 1), ("created_at", -1)])
+    await ordenes_col.create_index([("sucursal_id", 1), ("created_at", -1)])
     await ordenes_col.create_index("tecnico_id", sparse=True)
     await ordenes_col.create_index("cliente_id", sparse=True)
     await ordenes_col.create_index("sucursal_id", sparse=True)
     await ordenes_col.create_index("numero")
     await sucursales_col.create_index("comuna", sparse=True)
     await sucursales_col.create_index("region", sparse=True)
+    await sucursales_col.create_index([("region", 1), ("comuna", 1)])
     await sucursales_col.create_index("cliente_id", sparse=True)
     await clientes_col.create_index("nombre")
     existing = await users_col.find_one({"email": ADMIN_EMAIL.lower()})

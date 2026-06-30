@@ -176,10 +176,19 @@ export default function OrdenesList() {
   const load = useCallback(
     async (overridePage?: number) => {
       try {
+        const useGroupMode = groupBy === "region_comuna";
         const params = new URLSearchParams();
-        params.append("paginated", "true");
-        params.append("limit", String(pageLimit));
-        params.append("page", String(overridePage ?? page));
+        if (useGroupMode) {
+          // Acordeón: traer TODAS las órdenes (compact = sin pin_pads/fotos)
+          params.append("compact", "true");
+          params.append("limit", "10000");
+          params.append("paginated", "false");
+        } else {
+          params.append("paginated", "true");
+          params.append("compact", "true");
+          params.append("limit", String(pageLimit));
+          params.append("page", String(overridePage ?? page));
+        }
         if (filter && filter !== "sin_asignar") params.append("estado", filter);
         if (filterCliente) params.append("cliente_id", filterCliente);
         if (filterComuna) params.append("comuna", filterComuna);
@@ -187,14 +196,19 @@ export default function OrdenesList() {
         if (query.trim()) params.append("search", query.trim());
 
         const r = await api.get(`/admin/ordenes?${params.toString()}`);
-        let data: any[] = r.data?.items || [];
+        let data: any[] = useGroupMode ? (r.data || []) : (r.data?.items || []);
         if (filter === "sin_asignar") {
           // este filtro sigue siendo client-side (no hay query mongo simple)
           data = data.filter((o: any) => !o.tecnico_id);
         }
         setItems(data);
-        setTotalCount(r.data?.total || 0);
-        setTotalPages(r.data?.total_pages || 1);
+        if (useGroupMode) {
+          setTotalCount(data.length);
+          setTotalPages(1);
+        } else {
+          setTotalCount(r.data?.total || 0);
+          setTotalPages(r.data?.total_pages || 1);
+        }
       } catch (e) {
         console.log("ordenes load err", e);
       } finally {
@@ -202,13 +216,13 @@ export default function OrdenesList() {
         setRefreshing(false);
       }
     },
-    [filter, filterCliente, filterComuna, filterRegion, query, page, pageLimit]
+    [filter, filterCliente, filterComuna, filterRegion, query, page, pageLimit, groupBy]
   );
 
   // Recarga al cambiar filtros (volver a página 1)
   useEffect(() => {
     setPage(1);
-  }, [filter, filterCliente, filterComuna, filterRegion, query]);
+  }, [filter, filterCliente, filterComuna, filterRegion, query, groupBy]);
 
   // Debounce de búsqueda (300ms) — solo aplica para query
   useEffect(() => {
@@ -284,6 +298,7 @@ export default function OrdenesList() {
   // ---------- Acordeón por Región → Comuna ----------
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<"region_comuna" | "none">("region_comuna");
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
 
   const groupedData = useMemo(() => {
     if (groupBy === "none") {
@@ -351,6 +366,25 @@ export default function OrdenesList() {
   const expandAll = useCallback(() => {
     setCollapsedGroups(new Set());
   }, []);
+
+  // Auto-colapsar todos los grupos al cargar por primera vez (si hay >5 comunas).
+  // Esto evita renderizar miles de filas a la vez y hace la UI fluida.
+  useEffect(() => {
+    if (autoCollapsed) return;
+    if (groupBy !== "region_comuna") return;
+    if (groupedData.groups.length > 5) {
+      setCollapsedGroups(new Set(groupedData.groups.map((g) => g.key)));
+      setAutoCollapsed(true);
+    } else if (groupedData.groups.length > 0) {
+      setAutoCollapsed(true);
+    }
+  }, [groupedData.groups, groupBy, autoCollapsed]);
+
+  // Reset auto-collapse cuando cambian los filtros principales (para recolapsar
+  // sobre el nuevo conjunto resultante)
+  useEffect(() => {
+    setAutoCollapsed(false);
+  }, [filter, filterCliente, filterComuna, filterRegion, groupBy]);
 
   const selectAllInGroup = useCallback(
     (key: string) => {
@@ -915,7 +949,9 @@ export default function OrdenesList() {
         >
           <View style={styles.tableSummary}>
             <Text style={styles.tableSummaryText}>
-              {filteredItems.length} mostradas · {totalCount} total
+              {groupBy === "region_comuna"
+                ? `${totalCount} ${totalCount === 1 ? "orden total" : "órdenes totales"}`
+                : `${filteredItems.length} mostradas · ${totalCount} total`}
               {groupBy === "region_comuna" && groupedData.groups.length > 0 && (
                 <Text style={{ color: colors.textMuted }}>
                   {" "}
@@ -1118,8 +1154,8 @@ export default function OrdenesList() {
                 );
               })
             )}
-            {/* Paginación desktop */}
-            {totalPages > 1 && (
+            {/* Paginación desktop (solo en modo lista plana) */}
+            {groupBy !== "region_comuna" && totalPages > 1 && (
               <View style={styles.pagination} testID="pagination-desktop">
                 <TouchableOpacity
                   testID="page-prev-btn"
