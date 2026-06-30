@@ -99,6 +99,25 @@ export default function RutaTecnico() {
           </Text>
         </View>
 
+        {/* Acceso rápido a Costos del día */}
+        <TouchableOpacity
+          testID="abrir-costos-btn"
+          style={styles.costosBtn}
+          onPress={() => router.push("/(tecnico)/costos" as any)}
+          activeOpacity={0.85}
+        >
+          <View style={styles.costosIcon}>
+            <Ionicons name="cash-outline" size={22} color={colors.accent} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.costosTitle}>Costos del día</Text>
+            <Text style={styles.costosSub}>
+              Registra traslados, combustible, alimento y materiales
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+
         {ordenes.length === 0 && (
           <View style={styles.empty}>
             <Ionicons name="happy-outline" size={42} color={colors.textMuted} />
@@ -294,4 +313,25 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
   },
   restoText: { color: colors.textMain, fontSize: fontSize.xs },
+  // Costos del día button
+  costosBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  costosIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: `${colors.accent}22`,
+  },
+  costosTitle: { color: colors.textMain, fontWeight: "800", fontSize: fontSize.md },
+  costosSub: { color: colors.textMuted, fontSize: fontSize.xs, marginTop: 2 },
 });

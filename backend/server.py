@@ -50,6 +50,7 @@ users_col = db.users
 clientes_col = db.clientes
 sucursales_col = db.sucursales
 ordenes_col = db.ordenes
+costos_col = db.costos
 
 
 # ----------------- Image compression -----------------
@@ -316,6 +317,29 @@ class DisponibilidadSemanal(BaseModel):
 class OrdenCUEUpload(BaseModel):
     """Subida de foto del CUE (Comprobante Único Electrónico) para una orden."""
     cue_base64: str
+    notas: Optional[str] = None
+
+
+# ----------------- Costos del técnico -----------------
+COSTO_CATEGORIAS = {"traslado", "combustible", "alimento", "materiales", "otro"}
+
+
+class CostoCreate(BaseModel):
+    categoria: str  # traslado | combustible | alimento | materiales | otro
+    nombre: str
+    cantidad: float = 1
+    valor: float  # CLP unitario
+    fecha: Optional[str] = None  # YYYY-MM-DD; default hoy
+    notas: Optional[str] = None
+    orden_id: Optional[str] = None
+
+
+class CostoUpdate(BaseModel):
+    categoria: Optional[str] = None
+    nombre: Optional[str] = None
+    cantidad: Optional[float] = None
+    valor: Optional[float] = None
+    fecha: Optional[str] = None
     notas: Optional[str] = None
 
 
@@ -2886,6 +2910,198 @@ async def tecnico_delete_cue(
     return {"ok": True}
 
 
+# ===================================================================
+# ----------------- Costos del técnico ------------------------------
+# ===================================================================
+def _today_iso_date() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _normalize_categoria(c: str) -> str:
+    c = (c or "").strip().lower()
+    if c not in COSTO_CATEGORIAS:
+        return "otro"
+    return c
+
+
+def _clean_costo(doc: dict) -> dict:
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+async def _enrich_costo_tecnico(doc: dict) -> dict:
+    """Adjunta info mínima del técnico (para vista admin)."""
+    out = _clean_costo(doc)
+    tec = await users_col.find_one(
+        {"id": doc.get("tecnico_id")},
+        {"_id": 0, "id": 1, "nombre": 1, "apellidos": 1, "email": 1},
+    )
+    out["tecnico"] = tec
+    return out
+
+
+@api_router.post("/tecnico/costos", status_code=201)
+async def crear_costo(payload: CostoCreate, tec: dict = Depends(require_tecnico)):
+    if not payload.nombre or not payload.nombre.strip():
+        raise HTTPException(status_code=400, detail="Nombre requerido")
+    if payload.valor is None or payload.valor < 0:
+        raise HTTPException(status_code=400, detail="Valor inválido")
+    cantidad = float(payload.cantidad or 1)
+    if cantidad <= 0:
+        raise HTTPException(status_code=400, detail="Cantidad debe ser > 0")
+    valor = float(payload.valor)
+    fecha = (payload.fecha or _today_iso_date())[:10]
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tecnico_id": tec["id"],
+        "categoria": _normalize_categoria(payload.categoria),
+        "nombre": payload.nombre.strip(),
+        "cantidad": cantidad,
+        "valor": valor,
+        "total": round(cantidad * valor),
+        "fecha": fecha,
+        "notas": (payload.notas or "").strip() or None,
+        "orden_id": payload.orden_id or None,
+        "created_at": now_iso(),
+    }
+    await costos_col.insert_one(doc)
+    return _clean_costo(doc)
+
+
+@api_router.get("/tecnico/costos")
+async def listar_costos_tecnico(
+    fecha: Optional[str] = Query(None, description="YYYY-MM-DD; default hoy"),
+    fecha_desde: Optional[str] = Query(None),
+    fecha_hasta: Optional[str] = Query(None),
+    tec: dict = Depends(require_tecnico),
+):
+    q: dict = {"tecnico_id": tec["id"]}
+    if fecha:
+        q["fecha"] = fecha[:10]
+    elif fecha_desde or fecha_hasta:
+        rng: dict = {}
+        if fecha_desde:
+            rng["$gte"] = fecha_desde[:10]
+        if fecha_hasta:
+            rng["$lte"] = fecha_hasta[:10]
+        q["fecha"] = rng
+    else:
+        q["fecha"] = _today_iso_date()
+
+    items = await costos_col.find(q, {"_id": 0}).sort([("fecha", -1), ("created_at", -1)]).to_list(2000)
+
+    # Subtotales y total
+    total = sum((c.get("total") or 0) for c in items)
+    by_cat: dict = {}
+    for c in items:
+        cat = c.get("categoria") or "otro"
+        by_cat[cat] = by_cat.get(cat, 0) + (c.get("total") or 0)
+
+    return {
+        "items": items,
+        "total": total,
+        "por_categoria": by_cat,
+        "fecha": q.get("fecha") if isinstance(q.get("fecha"), str) else None,
+    }
+
+
+@api_router.patch("/tecnico/costos/{costo_id}")
+async def actualizar_costo(
+    costo_id: str, payload: CostoUpdate, tec: dict = Depends(require_tecnico)
+):
+    existing = await costos_col.find_one({"id": costo_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Costo no encontrado")
+    if existing.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a este costo")
+
+    update_data = {}
+    if payload.categoria is not None:
+        update_data["categoria"] = _normalize_categoria(payload.categoria)
+    if payload.nombre is not None:
+        update_data["nombre"] = payload.nombre.strip()
+    if payload.cantidad is not None:
+        if payload.cantidad <= 0:
+            raise HTTPException(status_code=400, detail="Cantidad debe ser > 0")
+        update_data["cantidad"] = float(payload.cantidad)
+    if payload.valor is not None:
+        if payload.valor < 0:
+            raise HTTPException(status_code=400, detail="Valor inválido")
+        update_data["valor"] = float(payload.valor)
+    if payload.fecha is not None:
+        update_data["fecha"] = payload.fecha[:10]
+    if payload.notas is not None:
+        update_data["notas"] = (payload.notas or "").strip() or None
+
+    if "cantidad" in update_data or "valor" in update_data:
+        new_q = update_data.get("cantidad", existing.get("cantidad", 1))
+        new_v = update_data.get("valor", existing.get("valor", 0))
+        update_data["total"] = round(new_q * new_v)
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Sin cambios")
+    update_data["updated_at"] = now_iso()
+    await costos_col.update_one({"id": costo_id}, {"$set": update_data})
+    doc = await costos_col.find_one({"id": costo_id}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/tecnico/costos/{costo_id}")
+async def eliminar_costo(costo_id: str, tec: dict = Depends(require_tecnico)):
+    existing = await costos_col.find_one({"id": costo_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Costo no encontrado")
+    if existing.get("tecnico_id") != tec["id"]:
+        raise HTTPException(status_code=403, detail="Sin acceso a este costo")
+    await costos_col.delete_one({"id": costo_id})
+    return {"ok": True}
+
+
+# ----------------- Admin: ver costos de todos los técnicos --------
+@api_router.get("/admin/costos")
+async def admin_listar_costos(
+    tecnico_id: Optional[str] = Query(None),
+    categoria: Optional[str] = Query(None),
+    fecha_desde: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    fecha_hasta: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    _: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if tecnico_id:
+        q["tecnico_id"] = tecnico_id
+    if categoria:
+        q["categoria"] = _normalize_categoria(categoria)
+    if fecha_desde or fecha_hasta:
+        rng: dict = {}
+        if fecha_desde:
+            rng["$gte"] = fecha_desde[:10]
+        if fecha_hasta:
+            rng["$lte"] = fecha_hasta[:10]
+        q["fecha"] = rng
+
+    items_raw = await costos_col.find(q, {"_id": 0}).sort(
+        [("fecha", -1), ("created_at", -1)]
+    ).to_list(5000)
+    items = [await _enrich_costo_tecnico(c) for c in items_raw]
+
+    total = sum((c.get("total") or 0) for c in items)
+    by_cat: dict = {}
+    by_tec: dict = {}
+    for c in items:
+        cat = c.get("categoria") or "otro"
+        by_cat[cat] = by_cat.get(cat, 0) + (c.get("total") or 0)
+        tid = c.get("tecnico_id")
+        if tid:
+            by_tec[tid] = by_tec.get(tid, 0) + (c.get("total") or 0)
+
+    return {
+        "items": items,
+        "total": total,
+        "por_categoria": by_cat,
+        "por_tecnico": by_tec,
+        "count": len(items),
+    }
+
+
 # Mount suministros sub-router (with /api prefix to match the main api_router)
 _sum_router = build_suministros_router(db, require_admin, get_current_user)
 app.include_router(_sum_router, prefix="/api")
@@ -2921,6 +3137,10 @@ async def on_startup():
     await sucursales_col.create_index([("region", 1), ("comuna", 1)])
     await sucursales_col.create_index("cliente_id", sparse=True)
     await clientes_col.create_index("nombre")
+    # Índices de costos del técnico
+    await costos_col.create_index([("tecnico_id", 1), ("fecha", -1)])
+    await costos_col.create_index([("fecha", -1), ("created_at", -1)])
+    await costos_col.create_index("categoria", sparse=True)
     existing = await users_col.find_one({"email": ADMIN_EMAIL.lower()})
     if not existing:
         admin_doc = {

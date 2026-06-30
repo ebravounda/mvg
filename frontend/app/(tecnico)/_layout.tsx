@@ -130,6 +130,9 @@ export default function TecnicoLayout() {
             ),
           }}
         />
+        {/* Pantallas que NO aparecen en la barra de tabs */}
+        <Tabs.Screen name="costos" options={{ href: null }} />
+        <Tabs.Screen name="ordenes/[id]" options={{ href: null }} />
       </Tabs>
     </View>
   );
