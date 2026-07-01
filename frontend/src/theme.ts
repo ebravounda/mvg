@@ -105,17 +105,15 @@ export const shadow = {
 };
 
 export const MVG_LOGO_URL =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/ro1zj8fb_ChatGPT%20Image%201%20jul%202026%2C%2001_44_12.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/0cd0xqt8_ChatGPT%20Image%201%20jul%202026%2C%2001_59_33%20%281%29.png";
 
-// Nuevo logo MVG (engrane azul + globo + texto MVG verde) — fondo transparente/negro
-// Funciona en fondos oscuros sin necesidad de mixBlendMode.
+// App icon (rounded-square blanco + engrane azul + globo + MVG COMPUTACION).
+// Diseño único para todos los contextos (fondo blanco propio).
 export const MVG_LOGO_LIGHT =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/ro1zj8fb_ChatGPT%20Image%201%20jul%202026%2C%2001_44_12.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/0cd0xqt8_ChatGPT%20Image%201%20jul%202026%2C%2001_59_33%20%281%29.png";
 
-// Para fondos claros usamos el mismo logo (el engrane es azul saturado y el
-// texto verde tienen suficiente contraste sobre claro).
 export const MVG_LOGO_DARK =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/ro1zj8fb_ChatGPT%20Image%201%20jul%202026%2C%2001_44_12.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/0cd0xqt8_ChatGPT%20Image%201%20jul%202026%2C%2001_59_33%20%281%29.png";
 
 export const statusLabels: Record<string, string> = {
   pendiente: "Pendiente",
