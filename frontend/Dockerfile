@@ -27,6 +27,10 @@ RUN echo "EXPO_PUBLIC_BACKEND_URL=https://mvg.goroky.es" > .env
 # Export PWA static
 RUN npx expo export --platform web --output-dir /dist
 
+# Post-process: inyectar tags PWA en /dist/index.html (Expo con output:"single"
+# no aplica +html.tsx, así que parcheamos el HTML resultante después del export).
+RUN PWA_DIST_DIR=/dist node scripts/inject-pwa-meta.js
+
 
 # ====== Stage 2: Serve with nginx ======
 FROM nginx:alpine
