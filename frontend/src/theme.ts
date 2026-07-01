@@ -105,15 +105,15 @@ export const shadow = {
 };
 
 export const MVG_LOGO_URL =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/0cd0xqt8_ChatGPT%20Image%201%20jul%202026%2C%2001_59_33%20%281%29.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/6kiasqk4_ChatGPT%20Image%201%20jul%202026%2C%2002_05_29.png";
 
 // App icon (rounded-square blanco + engrane azul + globo + MVG COMPUTACION).
 // Diseño único para todos los contextos (fondo blanco propio).
 export const MVG_LOGO_LIGHT =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/0cd0xqt8_ChatGPT%20Image%201%20jul%202026%2C%2001_59_33%20%281%29.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/6kiasqk4_ChatGPT%20Image%201%20jul%202026%2C%2002_05_29.png";
 
 export const MVG_LOGO_DARK =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/0cd0xqt8_ChatGPT%20Image%201%20jul%202026%2C%2001_59_33%20%281%29.png";
+  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/6kiasqk4_ChatGPT%20Image%201%20jul%202026%2C%2002_05_29.png";
 
 export const statusLabels: Record<string, string> = {
   pendiente: "Pendiente",
