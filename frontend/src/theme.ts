@@ -104,16 +104,21 @@ export const shadow = {
   },
 };
 
-export const MVG_LOGO_URL =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/6kiasqk4_ChatGPT%20Image%201%20jul%202026%2C%2002_05_29.png";
-
 // App icon (rounded-square blanco + engrane azul + globo + MVG COMPUTACION).
-// Diseño único para todos los contextos (fondo blanco propio).
-export const MVG_LOGO_LIGHT =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/6kiasqk4_ChatGPT%20Image%201%20jul%202026%2C%2002_05_29.png";
+// Servido desde /public/ para tener el logo procesado (esquinas transparentes,
+// sin borde oscuro). Fallback a asset local en native.
+import { Platform } from "react-native";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const iconAsset = require("../assets/images/icon.png");
 
-export const MVG_LOGO_DARK =
-  "https://customer-assets.emergentagent.com/job_mvg-fieldwork-hub/artifacts/6kiasqk4_ChatGPT%20Image%201%20jul%202026%2C%2002_05_29.png";
+export const MVG_LOGO_URL: any =
+  Platform.OS === "web" ? "/mvg-logo.png" : iconAsset;
+
+export const MVG_LOGO_LIGHT: any =
+  Platform.OS === "web" ? "/mvg-logo.png" : iconAsset;
+
+export const MVG_LOGO_DARK: any =
+  Platform.OS === "web" ? "/mvg-logo.png" : iconAsset;
 
 export const statusLabels: Record<string, string> = {
   pendiente: "Pendiente",
